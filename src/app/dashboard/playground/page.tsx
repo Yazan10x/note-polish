@@ -3,7 +3,7 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Plus } from "lucide-react";
+import { Plus, Trash2, ExternalLink } from "lucide-react";
 
 import type { PublicNoteGeneration, PublicStylePreset } from "@/lib/models/noteGeneration";
 import { Button } from "@/components/ui/button";
@@ -21,6 +21,7 @@ type UpdatePendingPayload = {
 };
 
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB per file
+const MAX_FILES = 3;
 
 function deriveTitleFromText(text: string): string {
     const t = text?.trim() ?? "";
@@ -29,11 +30,30 @@ function deriveTitleFromText(text: string): string {
     return firstLine.slice(0, 80);
 }
 
+function isAllowedUploadType(file: File): boolean {
+    if (!file?.type) return false;
+    if (file.type === "application/pdf") return true;
+    if (file.type.startsWith("image/")) return true;
+    return false;
+}
+
+function fileLabelFromUrl(url: string): string {
+    try {
+        const u = new URL(url, window.location.origin);
+        const path = u.pathname || "";
+        const last = path.split("/").filter(Boolean).pop() || "file";
+        return decodeURIComponent(last);
+    } catch {
+        const cleaned = url.split("?")[0] || "";
+        const last = cleaned.split("/").filter(Boolean).pop() || "file";
+        return last;
+    }
+}
+
 export default function PlaygroundPage() {
     const [title, setTitle] = useState("");
     const [inputText, setInputText] = useState("");
 
-    const [pickedFiles, setPickedFiles] = useState<File[]>([]);
     const [styleMode, setStyleMode] = useState<StyleMode>("preset");
 
     const [presets, setPresets] = useState<PublicStylePreset[]>([]);
@@ -48,12 +68,15 @@ export default function PlaygroundPage() {
     const [isBootLoading, setIsBootLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
+    const [isDeletingFile, setIsDeletingFile] = useState(false);
 
     const [didUpdateFlash, setDidUpdateFlash] = useState(false);
 
     const saveTimerRef = useRef<number | null>(null);
     const lastSavedSignatureRef = useRef<string>("");
     const updateFlashTimerRef = useRef<number | null>(null);
+
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
 
     // Title behaviour: auto from first line of inputText until user edits title manually.
     const isTitleManualRef = useRef(false);
@@ -67,6 +90,17 @@ export default function PlaygroundPage() {
         if (updateFlashTimerRef.current) window.clearTimeout(updateFlashTimerRef.current);
         setDidUpdateFlash(true);
         updateFlashTimerRef.current = window.setTimeout(() => setDidUpdateFlash(false), 1400);
+    }
+
+    async function refreshGeneration(id: string): Promise<PublicNoteGeneration> {
+        const res = await fetch(`/api/generations/${id}`, { method: "GET", cache: "no-store" });
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data?.error ?? "Failed to refresh generation");
+        }
+        const gen = (await res.json()) as PublicNoteGeneration;
+        if (gen?.id) setGeneration(gen);
+        return gen;
     }
 
     // 1) Load presets
@@ -93,7 +127,6 @@ export default function PlaygroundPage() {
     }, []);
 
     // 2) Get or create pending generation
-    // Note: server route exports POST, not GET.
     useEffect(() => {
         let cancelled = false;
 
@@ -116,11 +149,9 @@ export default function PlaygroundPage() {
 
                 setGeneration(gen);
 
-                // Hydrate UI state from server draft
                 const draftText = gen.input_text ?? "";
                 setInputText(draftText);
 
-                // Title hydrate: prefer server title if it exists, else derive from text
                 const serverTitle = (gen as any)?.title;
                 if (typeof serverTitle === "string") {
                     setTitle(serverTitle);
@@ -265,24 +296,8 @@ export default function PlaygroundPage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [title, inputText, styleMode, selectedPresetId, customPrompt, generation?.id, isBootLoading]);
 
-    function onPickFiles(list: FileList | null) {
-        if (!list) return;
-
-        const arr = Array.from(list);
-        const tooBig = arr.find((f) => f.size > MAX_FILE_SIZE_BYTES);
-        if (tooBig) {
-            setError(`File too large: ${tooBig.name}. Max is 5MB per file for MVP.`);
-            return;
-        }
-
-        setError(null);
-        setNotice(null);
-        setPickedFiles(arr);
-    }
-
-    async function uploadPickedFiles(): Promise<void> {
+    async function uploadFileNow(file: File): Promise<void> {
         if (!generation?.id) throw new Error("No pending generation");
-        if (!pickedFiles.length) return;
 
         setError(null);
         setNotice(null);
@@ -290,7 +305,7 @@ export default function PlaygroundPage() {
 
         try {
             const form = new FormData();
-            for (const f of pickedFiles) form.append("files", f);
+            form.append("file", file);
 
             const res = await fetch(`/api/generations/${generation.id}/files`, {
                 method: "POST",
@@ -300,17 +315,96 @@ export default function PlaygroundPage() {
 
             if (!res.ok) {
                 const data = await res.json().catch(() => ({}));
-                throw new Error(data?.error ?? "Failed to upload files");
+                throw new Error(data?.error ?? "Failed to upload file");
             }
 
-            const data = (await res.json()) as { generation?: PublicNoteGeneration } | PublicNoteGeneration;
-            const gen = "id" in (data as any) ? (data as PublicNoteGeneration) : (data as any).generation;
-            if (gen?.id) setGeneration(gen);
+            const updated = await refreshGeneration(generation.id);
+            const count = (updated.input_files?.length ?? 0);
 
-            setPickedFiles([]);
-            setNotice("Files uploaded");
+            setNotice(`Uploaded and attached (${count}/${MAX_FILES}).`);
         } finally {
+            if (fileInputRef.current) fileInputRef.current.value = "";
             setIsUploading(false);
+        }
+    }
+
+    async function onPickFile(fileList: FileList | null) {
+        const f = fileList?.item(0) ?? null;
+
+        setError(null);
+        setNotice(null);
+
+        if (!generation?.id) {
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            setError("Pending generation not ready yet");
+            return;
+        }
+
+        const currentCount = generation.input_files?.length ?? 0;
+        if (currentCount >= MAX_FILES) {
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            setError(`Max ${MAX_FILES} files. Delete one to upload another.`);
+            return;
+        }
+
+        if (!f) return;
+
+        if (!isAllowedUploadType(f)) {
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            setError("Unsupported file type. Only images and PDFs are allowed.");
+            return;
+        }
+
+        if (f.size <= 0) {
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            setError("Empty file.");
+            return;
+        }
+
+        if (f.size > MAX_FILE_SIZE_BYTES) {
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            setError("File too large. Max is 5MB per file.");
+            return;
+        }
+
+        if (isUploading || isDeletingFile) {
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            return;
+        }
+
+        try {
+            await uploadFileNow(f);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : "Failed to upload file";
+            setError(msg);
+        }
+    }
+
+    async function deleteAttachedFile(fileUrlOrKey: string): Promise<void> {
+        if (!generation?.id) throw new Error("No pending generation");
+
+        setError(null);
+        setNotice(null);
+        setIsDeletingFile(true);
+
+        try {
+            const res = await fetch(
+                `/api/generations/${generation.id}/files?fileKey=${encodeURIComponent(fileUrlOrKey)}`,
+                { method: "DELETE", cache: "no-store" }
+            );
+
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data?.error ?? "Failed to delete file");
+            }
+
+            await refreshGeneration(generation.id);
+            setNotice("File removed from this draft.");
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : "Failed to delete file";
+            setError(msg);
+        } finally {
+            setIsDeletingFile(false);
         }
     }
 
@@ -333,8 +427,10 @@ export default function PlaygroundPage() {
             return;
         }
 
-        if (!inputText.trim() && (generation.input_files?.length ?? 0) === 0 && pickedFiles.length === 0) {
-            setError("Add some text or upload at least one file.");
+        const hasAnyExistingFiles = (generation.input_files?.length ?? 0) > 0;
+
+        if (!inputText.trim() && !hasAnyExistingFiles) {
+            setError("Add some text or upload one file.");
             return;
         }
 
@@ -357,16 +453,6 @@ export default function PlaygroundPage() {
             setIsSaving(false);
         }
 
-        if (pickedFiles.length) {
-            try {
-                await uploadPickedFiles();
-            } catch (e) {
-                const msg = e instanceof Error ? e.message : "Failed to upload files";
-                setError(msg);
-                return;
-            }
-        }
-
         setNotice("Draft is ready. Next step is Submit and polling.");
         // eslint-disable-next-line no-console
         console.log("Draft ready:", generation.id);
@@ -381,6 +467,9 @@ export default function PlaygroundPage() {
     }
 
     const gridClass = "grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6";
+    const attachedFiles = generation?.input_files ?? [];
+    const canUploadMore = attachedFiles.length < MAX_FILES;
+    const isBusy = isUploading || isDeletingFile || isSaving;
 
     return (
         <div className="space-y-6">
@@ -393,16 +482,8 @@ export default function PlaygroundPage() {
                 </div>
 
                 <div className="flex gap-3">
-                    <Button
-                        variant="outline"
-                        onClick={uploadPickedFiles}
-                        disabled={!pickedFiles.length || isUploading || !generation?.id}
-                    >
-                        {isUploading ? "Uploading..." : "Upload files"}
-                    </Button>
-
-                    <Button onClick={onGenerate} disabled={isSaving || isUploading || !generation?.id}>
-                        {isSaving || isUploading ? "Saving..." : "Generate image"}
+                    <Button onClick={onGenerate} disabled={isBusy || !generation?.id}>
+                        {isBusy ? "Saving..." : "Generate image"}
                     </Button>
                 </div>
             </div>
@@ -444,21 +525,82 @@ export default function PlaygroundPage() {
                         </div>
 
                         <div className="space-y-2">
-                            <Label htmlFor="files">Upload files</Label>
-                            <Input
-                                id="files"
-                                type="file"
-                                multiple
-                                accept="image/*,application/pdf"
-                                onChange={(e) => onPickFiles(e.target.files)}
-                            />
-                            {pickedFiles.length ? (
-                                <div className="text-xs text-zinc-600 dark:text-zinc-400">
-                                    {pickedFiles.length} file(s) picked (not uploaded yet)
+                            <Label htmlFor="files">Upload file</Label>
+
+                            {canUploadMore ? (
+                                <>
+                                    <Input
+                                        ref={fileInputRef}
+                                        id="files"
+                                        type="file"
+                                        accept="image/*,application/pdf"
+                                        onChange={(e) => void onPickFile(e.target.files)}
+                                        disabled={isUploading || isDeletingFile}
+                                    />
+
+                                    <div className="text-xs text-zinc-600 dark:text-zinc-400">
+                                        Upload up to {MAX_FILES} files, one at a time (max 5MB each).{" "}
+                                        {isUploading ? "Uploading..." : null}
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="rounded-lg border border-zinc-200/70 bg-white/60 px-3 py-2 text-sm text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                                    You reached the {MAX_FILES} file limit. Delete a file to upload another.
+                                </div>
+                            )}
+
+                            {attachedFiles.length ? (
+                                <div className="mt-2 rounded-lg border border-zinc-200/70 bg-white/60 p-3 dark:border-white/10 dark:bg-white/5">
+                                    <div className="mb-2 flex items-center justify-between gap-3 text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                                        <span>Attached files</span>
+                                        <span className="text-zinc-600 dark:text-zinc-400">
+                                            {attachedFiles.length}/{MAX_FILES}
+                                        </span>
+                                    </div>
+
+                                    <div className="space-y-3">
+                                        {attachedFiles.map((u) => {
+                                            const label = fileLabelFromUrl(u);
+                                            return (
+                                                <div
+                                                    key={u}
+                                                    className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between"
+                                                >
+                                                    <div className="min-w-0">
+                                                        <div className="truncate text-sm text-zinc-900 dark:text-zinc-100">
+                                                            {label}
+                                                        </div>
+                                                        <div className="truncate text-[11px] text-zinc-600 dark:text-zinc-400">
+                                                            {u}
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="flex gap-2">
+                                                        <Button variant="outline" size="sm" asChild disabled={isBusy}>
+                                                            <a href={u} target="_blank" rel="noreferrer">
+                                                                <ExternalLink className="mr-2 h-4 w-4" />
+                                                                Open
+                                                            </a>
+                                                        </Button>
+
+                                                        <Button
+                                                            variant="destructive"
+                                                            size="sm"
+                                                            onClick={() => void deleteAttachedFile(u)}
+                                                            disabled={isBusy}
+                                                        >
+                                                            <Trash2 className="mr-2 h-4 w-4" />
+                                                            {isDeletingFile ? "Deleting..." : "Delete"}
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
                                 </div>
                             ) : (
                                 <div className="text-xs text-zinc-600 dark:text-zinc-400">
-                                    Optional. You can generate from text only too.
+                                    No files attached yet.
                                 </div>
                             )}
                         </div>
@@ -469,7 +611,6 @@ export default function PlaygroundPage() {
                             </div>
 
                             <div className={gridClass}>
-                                {/* Presets first */}
                                 {presets.map((p) => {
                                     const active = styleMode === "preset" && p.id === selectedPresetId;
 
@@ -528,7 +669,6 @@ export default function PlaygroundPage() {
                                     );
                                 })}
 
-                                {/* Custom last */}
                                 <button
                                     type="button"
                                     onClick={() => {
@@ -589,14 +729,13 @@ export default function PlaygroundPage() {
                                 id="text"
                                 value={inputText}
                                 onChange={(e) => setInputText(e.target.value)}
-                                placeholder="Paste text notes here (optional if you uploaded files)"
+                                placeholder="Paste text notes here (optional if you uploaded a file)"
                                 className="min-h-40"
                             />
                         </div>
 
                         <div className="text-xs text-zinc-600 dark:text-zinc-400">
-                            Draft autosaves while status is pending.{" "}
-                            {isSaving ? "Saving..." : didUpdateFlash ? "Updated" : null}
+                            Draft autosaves while status is pending. {isSaving ? "Saving..." : didUpdateFlash ? "Updated" : null}
                         </div>
 
                         {generation?.id ? (

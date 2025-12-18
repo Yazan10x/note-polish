@@ -17,6 +17,20 @@ const COLLECTIONS = {
     noteGenerations: "note_generations",
 } as const;
 
+type Ctx =
+    | { params: { id: string } }
+    | { params: Promise<{ id: string }> };
+
+async function getIdFromCtx(ctx: Ctx): Promise<string | null> {
+    const paramsAny = (ctx as any)?.params;
+    if (!paramsAny) return null;
+
+    const params = typeof paramsAny?.then === "function" ? await paramsAny : paramsAny;
+    const id = params?.id;
+
+    return typeof id === "string" && id.trim().length ? id.trim() : null;
+}
+
 function isAllowedMime(type: string): boolean {
     if (!type) return false;
     if (type === "application/pdf") return true;
@@ -26,6 +40,7 @@ function isAllowedMime(type: string): boolean {
 
 function extractHexId(v: unknown): string | null {
     if (!v) return null;
+
     if (v instanceof ObjectId) return v.toHexString();
 
     if (typeof v === "string") {
@@ -36,7 +51,20 @@ function extractHexId(v: unknown): string | null {
 
     if (typeof v === "object") {
         const anyV = v as any;
-        return extractHexId(anyV.id ?? anyV._id ?? anyV.user_id ?? anyV.userId);
+
+        if (typeof anyV.$oid === "string") return extractHexId(anyV.$oid);
+        if (anyV._id) return extractHexId(anyV._id);
+        if (anyV.id) return extractHexId(anyV.id);
+        if (anyV.user_id) return extractHexId(anyV.user_id);
+        if (anyV.userId) return extractHexId(anyV.userId);
+
+        try {
+            const s = String(anyV);
+            const m = s.match(/[a-f0-9]{24}/i);
+            return m ? m[0].toLowerCase() : null;
+        } catch {
+            return null;
+        }
     }
 
     return null;
@@ -107,11 +135,7 @@ async function requireUser() {
 }
 
 function collectFiles(form: FormData): File[] {
-    const incoming = [
-        ...form.getAll("files"),
-        ...form.getAll("files[]"),
-        ...form.getAll("file"),
-    ];
+    const incoming = [...form.getAll("file"), ...form.getAll("files"), ...form.getAll("files[]")];
 
     const files: File[] = [];
     for (const v of incoming) {
@@ -120,9 +144,12 @@ function collectFiles(form: FormData): File[] {
     return files;
 }
 
-export async function POST(req: Request, ctx: { params: { id: string } }) {
+export async function POST(req: Request, ctx: Ctx) {
     const auth = await requireUser();
     if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const rawId = await getIdFromCtx(ctx);
+    if (!rawId) return NextResponse.json({ error: "Invalid generation id" }, { status: 400 });
 
     const contentType = req.headers.get("content-type") ?? "";
     if (!contentType.toLowerCase().includes("multipart/form-data")) {
@@ -137,30 +164,20 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
     }
 
     const files = collectFiles(form);
-    if (files.length === 0) {
-        return NextResponse.json({ error: "No files provided" }, { status: 400 });
-    }
+    if (files.length === 0) return NextResponse.json({ error: "No file provided" }, { status: 400 });
+    if (files.length > 1) return NextResponse.json({ error: "Only 1 file is allowed for now" }, { status: 400 });
 
-    for (const f of files) {
-        if (!isAllowedMime(f.type)) {
-            return NextResponse.json(
-                { error: `Unsupported file type: ${f.type || "unknown"}` },
-                { status: 400 }
-            );
-        }
-        if (f.size <= 0) {
-            return NextResponse.json({ error: "Empty file" }, { status: 400 });
-        }
-        if (f.size > MAX_FILE_BYTES) {
-            return NextResponse.json(
-                { error: `File too large. Max is ${MAX_FILE_BYTES} bytes per file.` },
-                { status: 413 }
-            );
-        }
+    const f = files[0]!;
+    if (!isAllowedMime(f.type)) {
+        return NextResponse.json(
+            { error: `Unsupported file type: ${f.type || "unknown"}` },
+            { status: 400 }
+        );
     }
-
-    const rawId = ctx.params.id?.trim();
-    if (!rawId) return NextResponse.json({ error: "Invalid generation id" }, { status: 400 });
+    if (f.size <= 0) return NextResponse.json({ error: "Empty file" }, { status: 400 });
+    if (f.size > MAX_FILE_BYTES) {
+        return NextResponse.json({ error: "File too large. Max is 5MB." }, { status: 413 });
+    }
 
     const uploadedKeys: string[] = [];
 
@@ -175,18 +192,14 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
         if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
         const ownerId = extractHexId((existing as any).user_id);
-        if (!ownerId || ownerId !== auth.meId) {
-            return NextResponse.json({ error: "Not found" }, { status: 404 });
-        }
+        if (!ownerId || ownerId !== auth.meId) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
         if (existing.status !== "pending") {
             return NextResponse.json({ error: "Only pending generations can be edited" }, { status: 409 });
         }
 
-        for (const f of files) {
-            const key = await FileManager.upload(f);
-            uploadedKeys.push(key);
-        }
+        const key = await FileManager.upload(f);
+        uploadedKeys.push(key);
 
         const res = await gens.updateOne(
             { _id: genOid, user_id: userOid },
@@ -196,9 +209,7 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
             }
         );
 
-        if (res.matchedCount !== 1) {
-            throw new Error("Not found");
-        }
+        if (res.matchedCount !== 1) throw new Error("Not found");
 
         const updated = await gens.findOne({ _id: genOid });
         if (!updated) throw new Error("Not found");
@@ -209,9 +220,7 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
             generation: await toPublic(updated),
         });
     } catch (e) {
-        for (const k of uploadedKeys) {
-            await FileManager.delete(k).catch(() => {});
-        }
+        await Promise.allSettled(uploadedKeys.map((k) => FileManager.delete(k)));
 
         const msg = e instanceof Error ? e.message : "Upload failed";
         const status = msg.startsWith("Invalid ") ? 400 : msg === "Not found" ? 404 : 500;
@@ -219,16 +228,23 @@ export async function POST(req: Request, ctx: { params: { id: string } }) {
     }
 }
 
-export async function DELETE(req: Request, ctx: { params: { id: string } }) {
+export async function DELETE(req: Request, ctx: Ctx) {
     const auth = await requireUser();
     if (!auth) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const rawId = ctx.params.id?.trim();
+    const rawId = await getIdFromCtx(ctx);
     if (!rawId) return NextResponse.json({ error: "Invalid generation id" }, { status: 400 });
 
     const url = new URL(req.url);
-    const fileKey = url.searchParams.get("fileKey")?.trim();
-    if (!fileKey) return NextResponse.json({ error: "Missing fileKey" }, { status: 400 });
+    const fileKeyRaw = url.searchParams.get("fileKey")?.trim();
+    if (!fileKeyRaw) return NextResponse.json({ error: "Missing fileKey" }, { status: 400 });
+
+    // Convert "/files/<hex>" or "http://.../files/<hex>" into "<hex>"
+    function normalizeToComparable(v: string): string {
+        const hex = extractHexId(v);
+        if (hex) return hex; // best match for mongo/gridfs ids
+        return v.trim();
+    }
 
     try {
         const genOid = parseObjectIdFromParam(rawId, "generation");
@@ -241,32 +257,37 @@ export async function DELETE(req: Request, ctx: { params: { id: string } }) {
         if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
         const ownerId = extractHexId((existing as any).user_id);
-        if (!ownerId || ownerId !== auth.meId) {
-            return NextResponse.json({ error: "Not found" }, { status: 404 });
-        }
+        if (!ownerId || ownerId !== auth.meId) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
         if (existing.status !== "pending") {
             return NextResponse.json({ error: "Only pending generations can be edited" }, { status: 409 });
         }
 
-        if (!(existing.input_files ?? []).includes(fileKey)) {
+        const wanted = normalizeToComparable(fileKeyRaw);
+
+        // Find the exact stored entry to remove (important: remove the stored key, not the URL)
+        const storedKey =
+            (existing.input_files ?? []).find((k) => k === fileKeyRaw) ??
+            (existing.input_files ?? []).find((k) => normalizeToComparable(k) === wanted);
+
+        if (!storedKey) {
             return NextResponse.json({ error: "Not found" }, { status: 404 });
         }
 
-        // Detach first, then delete bytes. If delete bytes fails, you at least removed it from the note.
         await gens.updateOne(
             { _id: genOid, user_id: userOid },
-            { $pull: { input_files: fileKey }, $set: { updated_at: new Date() } }
+            { $pull: { input_files: storedKey }, $set: { updated_at: new Date() } }
         );
 
-        await FileManager.delete(fileKey).catch(() => {});
+        // Delete using the stored key (mongo case expects the id, not "/files/<id>")
+        await FileManager.delete(storedKey).catch(() => {});
 
         const updated = await gens.findOne({ _id: genOid });
         if (!updated) throw new Error("Not found");
 
         return NextResponse.json({
             ok: true,
-            removed_key: fileKey,
+            removed_key: storedKey,
             generation: await toPublic(updated),
         });
     } catch (e) {

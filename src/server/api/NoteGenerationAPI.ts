@@ -1,5 +1,5 @@
 // src/server/api/NoteGenerationAPI.ts
-import { ObjectId } from "mongodb";
+import {ObjectId, UpdateFilter, WithId} from "mongodb";
 
 import { ConnectionManager } from "@/lib/ConnectionManager";
 
@@ -172,36 +172,51 @@ export class NoteGenerationAPI {
     const gens = db.collection<NoteGenerationDb>(COLLECTIONS.noteGenerations);
     const styles = db.collection<StylePresetDb>(COLLECTIONS.stylePresets);
 
-    const existing = await gens.findOne({ user_id: userId, status: "pending" }, { sort: { updated_at: -1 } });
-    if (existing) return existing;
+    const defaultPreset = await styles
+        .find({ is_active: true })
+        .sort({ sort_order: 1 })
+        .limit(1)
+        .next();
 
-    const defaultPreset = await styles.find({ is_active: true }).sort({ sort_order: 1 }).limit(1).next();
     if (!defaultPreset) throw new Error("No active style presets found");
 
     const now = new Date();
-    const doc: NoteGenerationDb = {
-      _id: new ObjectId(),
-      user_id: userId,
 
-      status: "pending",
+    const update: UpdateFilter<NoteGenerationDb> = {
+      $setOnInsert: {
+        user_id: userId,
+        status: "pending",
 
-      input_files: [],
-      style: {
-        mode: "preset",
-        preset_id: defaultPreset._id.toString(),
-        snapshot_prompt: defaultPreset.prompt,
-        snapshot_title: defaultPreset.title,
+        input_files: [],
+        style: {
+          mode: "preset",
+          preset_id: defaultPreset._id.toString(),
+          snapshot_prompt: defaultPreset.prompt,
+          snapshot_title: defaultPreset.title,
+        },
+
+        is_favourite: false,
+        is_downloaded: false,
+
+        created_at: now,
+      } as any,
+      $set: {
+        updated_at: now,
       },
-
-      is_favourite: false,
-      is_downloaded: false,
-
-      created_at: now,
-      updated_at: now,
     };
 
-    await gens.insertOne(doc);
-    return doc;
+    const doc = await gens.findOneAndUpdate(
+        { user_id: userId, status: "pending" },
+        update,
+        {
+          upsert: true,
+          returnDocument: "after",
+          includeResultMetadata: false,
+        }
+    );
+
+    if (!doc) throw new Error("Failed to load or create pending generation");
+    return doc as WithId<NoteGenerationDb>;
   }
 
   // 3) Update the pending generation (text + style)

@@ -49,6 +49,8 @@ export default function HistoryPage() {
     const [status, setStatus] = useState<(typeof STATUS_OPTIONS)[number]["key"]>("all");
     const [page, setPage] = useState(1);
 
+    const [reloadKey, setReloadKey] = useState(0);
+
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
 
@@ -64,6 +66,10 @@ export default function HistoryPage() {
         return items.every((g) => selectedIds[g.id]);
     }, [items, selectedIds]);
 
+    function triggerReload() {
+        setReloadKey((k) => k + 1);
+    }
+
     useEffect(() => {
         let cancelled = false;
 
@@ -78,7 +84,10 @@ export default function HistoryPage() {
                 if (query.trim()) params.set("q", query.trim());
                 if (status !== "all") params.set("status", status);
 
-                const res = await fetch(`/api/generations?${params.toString()}`, { method: "GET" });
+                const res = await fetch(`/api/generations?${params.toString()}`, {
+                    method: "GET",
+                    cache: "no-store",
+                });
                 if (!res.ok) {
                     const data = await safeJson(res);
                     throw new Error(data?.error || "Failed to load history");
@@ -106,7 +115,7 @@ export default function HistoryPage() {
         return () => {
             cancelled = true;
         };
-    }, [page, query, status]);
+    }, [page, query, status, reloadKey]);
 
     const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
@@ -122,14 +131,39 @@ export default function HistoryPage() {
 
     async function deleteOne(id: string) {
         setError(null);
+
         try {
             const res = await fetch(`/api/generations/${id}`, { method: "DELETE" });
             if (!res.ok) {
                 const data = await safeJson(res);
                 throw new Error(data?.error || "Delete failed");
             }
-            router.refresh();
+
+            // Optimistic UI update so the row disappears immediately
+            setItems((prev) => {
+                const next = prev.filter((g) => g.id !== id);
+
+                // If we deleted the last row on a non-first page, move back a page and reload
+                if (next.length === 0 && page > 1) {
+                    setPage((p) => Math.max(1, p - 1));
+                } else {
+                    triggerReload();
+                }
+
+                return next;
+            });
+
+            setTotal((t) => Math.max(0, t - 1));
+            setSelectedIds((prev) => {
+                const next = { ...prev };
+                delete next[id];
+                return next;
+            });
+
+            // If you want to always jump to page 1 after delete, keep this.
+            // It now reliably triggers a reload even when page is already 1.
             setPage(1);
+            triggerReload();
         } catch (e) {
             setError(e instanceof Error ? e.message : "Delete failed");
         }
@@ -151,6 +185,7 @@ export default function HistoryPage() {
                         className="gap-2"
                         onClick={() => {
                             setPage(1);
+                            triggerReload();
                             router.refresh();
                         }}
                     >
@@ -445,11 +480,9 @@ function formatStyle(g: PublicNoteGeneration) {
     }
 
     if (style?.mode === "preset") {
-        // snapshot_title should be the preset title at time of generation
         return style?.snapshot_title || "Preset";
     }
 
-    // fallback for older docs
     const legacySnapshot = (g as any)?.snapshot_title;
     if (legacySnapshot) return String(legacySnapshot);
 
