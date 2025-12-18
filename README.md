@@ -3,6 +3,9 @@
 Note Polish turns messy notes into a clean, one page study sheet you can actually review.
 Upload a screenshot or paste text, pick a style, and generate a print ready summary in seconds.
 
+<img width="1147" height="900" alt="image" src="https://github.com/user-attachments/assets/a5659497-e5ee-4df1-928d-27571f45557e" />
+
+
 ## Tech Stack
 - Next.js (TypeScript)
 - Tailwind + shadcn/ui
