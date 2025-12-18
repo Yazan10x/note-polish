@@ -13,13 +13,7 @@ export default function Home() {
             <div className="mx-auto max-w-6xl px-6 py-16">
                 <header className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
-                        <Image
-                            src="/icon.png"
-                            alt="Notes Polish"
-                            width={46}
-                            height={46}
-                            priority
-                        />
+                        <Image src="/icon.png" alt="Notes Polish" width={46} height={46} priority />
                         <div className="leading-tight">
                             <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
                                 Notes Polish
@@ -35,7 +29,7 @@ export default function Home() {
                             <Link href="/login">Sign in</Link>
                         </Button>
                         <Button asChild>
-                            <Link href="/login">Get started</Link>
+                            <Link href="/signup">Get started</Link>
                         </Button>
                     </div>
                 </header>
@@ -58,10 +52,10 @@ export default function Home() {
 
                         <div className="mt-8 flex flex-col gap-3 sm:flex-row">
                             <Button asChild className="sm:w-auto">
-                                <Link href="/login">Get started</Link>
+                                <Link href="/signup">Get started</Link>
                             </Button>
                             <Button asChild variant="outline" className="sm:w-auto">
-                                <Link href="/login">See examples</Link>
+                                <Link href="/signup">See examples</Link>
                             </Button>
                         </div>
 
@@ -110,7 +104,7 @@ export default function Home() {
                                         </div>
                                     </div>
                                     <Button asChild size="sm">
-                                        <Link href="/login">Continue</Link>
+                                        <Link href="/signup">Continue</Link>
                                     </Button>
                                 </div>
                             </div>
