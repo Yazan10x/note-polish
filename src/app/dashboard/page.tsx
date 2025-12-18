@@ -19,12 +19,40 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
+type DashboardStatus = "pending" | "processing" | "processed" | "failed";
+
+type DashboardResponse = {
+    period_days: number;
+    metrics: {
+        generations_last_period: number;
+        downloads_last_period: number;
+        favourites_total: number;
+        active_styles: number;
+    };
+    recent_generations: Array<{
+        id: string;
+        title: string;
+        style_label: string;
+        status: DashboardStatus;
+        created_at: string; // ISO
+    }>;
+    quick_actions: Array<{
+        key: "open_playground" | "view_history";
+        title: string;
+        href: string;
+    }>;
+};
+
 export default function DashboardPage() {
     const router = useRouter();
 
     const [user, setUser] = useState<PublicUser | null>(null);
     const [isLoadingUser, setIsLoadingUser] = useState(true);
     const [signOutError, setSignOutError] = useState<string | null>(null);
+
+    const [dashboard, setDashboard] = useState<DashboardResponse | null>(null);
+    const [isLoadingDashboard, setIsLoadingDashboard] = useState(false);
+    const [dashboardError, setDashboardError] = useState<string | null>(null);
 
     useEffect(() => {
         let cancelled = false;
@@ -58,6 +86,49 @@ export default function DashboardPage() {
         };
     }, [router]);
 
+    useEffect(() => {
+        if (isLoadingUser) return;
+        if (!user) return;
+
+        let cancelled = false;
+
+        async function loadDashboard() {
+            setDashboardError(null);
+            setIsLoadingDashboard(true);
+
+            try {
+                const res = await fetch("/api/dashboard", {
+                    method: "GET",
+                    cache: "no-store",
+                });
+
+                if (res.status === 401) {
+                    router.replace("/login");
+                    return;
+                }
+
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    setDashboardError(data?.error ?? "Failed to load dashboard");
+                    return;
+                }
+
+                const data = (await res.json()) as DashboardResponse;
+                if (!cancelled) setDashboard(data);
+            } catch {
+                if (!cancelled) setDashboardError("Failed to load dashboard");
+            } finally {
+                if (!cancelled) setIsLoadingDashboard(false);
+            }
+        }
+
+        loadDashboard();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [isLoadingUser, user, router]);
+
     const displayUser = useMemo(() => {
         if (user) return user;
         return {
@@ -68,6 +139,11 @@ export default function DashboardPage() {
             updated_at: new Date().toISOString(),
         } satisfies PublicUser;
     }, [user]);
+
+    const statDaysLabel = useMemo(() => {
+        const d = dashboard?.period_days ?? 7;
+        return `Last ${d} days`;
+    }, [dashboard?.period_days]);
 
     async function onSignOut() {
         setSignOutError(null);
@@ -176,6 +252,12 @@ export default function DashboardPage() {
                             </div>
                         ) : null}
 
+                        {dashboardError ? (
+                            <div className="rounded-lg border border-zinc-200/70 bg-white/60 px-3 py-2 text-sm text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                                {dashboardError}
+                            </div>
+                        ) : null}
+
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                             <div>
                                 <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>
@@ -194,10 +276,26 @@ export default function DashboardPage() {
                         </div>
 
                         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                            <StatCard title="Generations" value="12" hint="Last 7 days" />
-                            <StatCard title="Downloads" value="8" hint="Last 7 days" />
-                            <StatCard title="Favorites" value="3" hint="Saved outputs" />
-                            <StatCard title="Active styles" value="5" hint="Presets used" />
+                            <StatCard
+                                title="Generations"
+                                value={String(dashboard?.metrics.generations_last_period ?? (isLoadingDashboard ? "…" : 0))}
+                                hint={statDaysLabel}
+                            />
+                            <StatCard
+                                title="Downloads"
+                                value={String(dashboard?.metrics.downloads_last_period ?? (isLoadingDashboard ? "…" : 0))}
+                                hint={statDaysLabel}
+                            />
+                            <StatCard
+                                title="Favorites"
+                                value={String(dashboard?.metrics.favourites_total ?? (isLoadingDashboard ? "…" : 0))}
+                                hint="Saved outputs"
+                            />
+                            <StatCard
+                                title="Active styles"
+                                value={String(dashboard?.metrics.active_styles ?? (isLoadingDashboard ? "…" : 0))}
+                                hint="Available presets"
+                            />
                         </div>
 
                         <div className="grid gap-4 lg:grid-cols-3">
@@ -206,10 +304,25 @@ export default function DashboardPage() {
                                     <CardTitle className="text-base">Recent generations</CardTitle>
                                 </CardHeader>
                                 <CardContent className="space-y-3">
-                                    <Row title="CSC384H1 Lecture 7 summary" meta="Minimal, 2 minutes ago" />
-                                    <Row title="STA314H1 Midterm sheet" meta="High contrast, 1 hour ago" />
-                                    <Row title="CSC413H1 process notes" meta="Exam sheet, yesterday" />
-                                    <Row title="STA302H1 confidence intervals" meta="Colorful, 2 days ago" />
+                                    {isLoadingDashboard ? (
+                                        <>
+                                            <Row title="Loading…" meta="" />
+                                            <Row title="Loading…" meta="" />
+                                            <Row title="Loading…" meta="" />
+                                        </>
+                                    ) : (dashboard?.recent_generations?.length ?? 0) > 0 ? (
+                                        dashboard!.recent_generations.map((g) => (
+                                            <Row
+                                                key={g.id}
+                                                title={g.title}
+                                                meta={`${g.style_label}, ${relativeTime(g.created_at)}`}
+                                            />
+                                        ))
+                                    ) : (
+                                        <div className="rounded-lg border border-zinc-200/70 bg-white/60 px-4 py-3 text-sm text-zinc-600 dark:border-white/10 dark:bg-white/5 dark:text-zinc-400">
+                                            No generations yet. Create your first one in Playground.
+                                        </div>
+                                    )}
                                 </CardContent>
                             </Card>
 
@@ -224,18 +337,13 @@ export default function DashboardPage() {
                                     <Button asChild variant="outline" className="w-full">
                                         <Link href="/dashboard/history">Open history</Link>
                                     </Button>
-                                    <Button asChild variant="outline" className="w-full">
-                                        <Link href="/dashboard/settings">Edit presets</Link>
-                                    </Button>
                                 </CardContent>
                             </Card>
                         </div>
+
                         <footer className="mt-16 border-t border-zinc-200/70 pt-6 text-xs text-zinc-500 dark:border-white/10 dark:text-zinc-500">
                             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                <div>
-                                    © {new Date().getFullYear()} Note Polish
-                                </div>
-
+                                <div>© {new Date().getFullYear()} Note Polish</div>
                                 <div>
                                     Built by{" "}
                                     <a
@@ -274,9 +382,7 @@ function ThemeToggle() {
             return;
         }
 
-        const prefersDark =
-            window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-
+        const prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
         if (prefersDark) root.classList.add("dark");
         setIsDark(prefersDark);
     }, []);
@@ -327,9 +433,7 @@ function StatCard({ title, value, hint }: { title: string; value: string; hint: 
     return (
         <Card className="border-zinc-200/70 bg-white/70 backdrop-blur dark:border-white/10 dark:bg-white/5">
             <CardHeader className="pb-2">
-                <CardTitle className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-                    {title}
-                </CardTitle>
+                <CardTitle className="text-sm font-medium text-zinc-700 dark:text-zinc-300">{title}</CardTitle>
             </CardHeader>
             <CardContent>
                 <div className="text-2xl font-semibold">{value}</div>
@@ -353,4 +457,26 @@ function initials(fullName: string) {
     const first = parts[0]?.[0] ?? "";
     const last = parts.length > 1 ? parts[parts.length - 1][0] : "";
     return (first + last).toUpperCase();
+}
+
+function relativeTime(iso: string): string {
+    const ts = Date.parse(iso);
+    if (!Number.isFinite(ts)) return "just now";
+
+    const diffMs = ts - Date.now();
+    const diffSec = Math.round(diffMs / 1000);
+
+    const rtf = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
+
+    const abs = Math.abs(diffSec);
+    if (abs < 60) return rtf.format(diffSec, "second");
+
+    const diffMin = Math.round(diffSec / 60);
+    if (Math.abs(diffMin) < 60) return rtf.format(diffMin, "minute");
+
+    const diffHr = Math.round(diffMin / 60);
+    if (Math.abs(diffHr) < 24) return rtf.format(diffHr, "hour");
+
+    const diffDay = Math.round(diffHr / 24);
+    return rtf.format(diffDay, "day");
 }
