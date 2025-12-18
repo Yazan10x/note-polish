@@ -15,6 +15,7 @@ type FieldErrors = {
     full_name?: string;
     email?: string;
     password?: string;
+    confirm_password?: string;
 };
 
 export default function SignupPage() {
@@ -23,6 +24,7 @@ export default function SignupPage() {
     const [full_name, setFullName] = useState("");
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
+    const [confirm_password, setConfirmPassword] = useState("");
 
     const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
     const [error, setError] = useState<string | null>(null);
@@ -33,6 +35,7 @@ export default function SignupPage() {
         setError(null);
         setFieldErrors({});
 
+        // 1) Validate core fields using shared schema
         const parsed = SignupInputSchema.safeParse({ full_name, email, password });
         if (!parsed.success) {
             const flat = parsed.error.flatten().fieldErrors;
@@ -45,12 +48,22 @@ export default function SignupPage() {
             return;
         }
 
+        // 2) Validate confirm password client-side
+        if (password !== confirm_password) {
+            setFieldErrors((prev) => ({
+                ...prev,
+                confirm_password: "Passwords do not match.",
+            }));
+            setError("Please fix the highlighted fields.");
+            return;
+        }
+
         setIsSubmitting(true);
         try {
             const res = await fetch("/api/auth/signup", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(parsed.data),
+                body: JSON.stringify(parsed.data), // confirm_password not sent
             });
 
             if (!res.ok) {
@@ -152,6 +165,25 @@ export default function SignupPage() {
                                     {fieldErrors.password ? (
                                         <div className="text-xs text-zinc-600 dark:text-zinc-400">
                                             {fieldErrors.password}
+                                        </div>
+                                    ) : null}
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label htmlFor="confirm_password">Confirm password</Label>
+                                    <Input
+                                        id="confirm_password"
+                                        type="password"
+                                        placeholder="••••••••"
+                                        autoComplete="new-password"
+                                        value={confirm_password}
+                                        onChange={(e) => setConfirmPassword(e.target.value)}
+                                        disabled={isSubmitting}
+                                        aria-invalid={Boolean(fieldErrors.confirm_password)}
+                                    />
+                                    {fieldErrors.confirm_password ? (
+                                        <div className="text-xs text-zinc-600 dark:text-zinc-400">
+                                            {fieldErrors.confirm_password}
                                         </div>
                                     ) : null}
                                 </div>
