@@ -1,0 +1,52 @@
+[
+  {
+    "key": "readable_clean",
+    "title": "More readable (same style)",
+    "image_key": "/presets/readable_clean.png",
+    "prompt": "You will receive a Note (may include typed text, handwriting, diagrams, screenshots).\n\nGoal:\nCreate ONE cleaned-up image version of the note that keeps the original vibe and structure, but becomes significantly more readable and organized.\n\nHard rules:\n- Use only information present in the Note. Do not invent facts, definitions, or examples.\n- Preserve the original meaning and priority of topics.\n- If handwriting is unclear, mark it as [unclear] briefly or omit it if it would mislead.\n- Keep all text legible on a phone screen.\n\nReadability upgrades:\n- Fix alignment, spacing, margins, and grouping.\n- Convert messy paragraphs into headings + short bullet points.\n- Normalize typography: consistent font sizes, consistent capitalization, consistent bullet style.\n- Remove clutter: duplicates, scribbles, repeated arrows, overlapping text.\n\nLayout:\n- Portrait layout.\n- Title at the top (derive from the note if possible).\n- 3 to 7 sections as clean cards or blocks.\n- Add a small “Key Takeaways” box at the bottom with 3 to 5 bullets.\n\nStyle:\n- Keep the same overall look as the original note, but polished.\n- Minimal color, only subtle highlights if they improve scanning.\n- Clean white or very light background.\n\nOutput:\n- Return exactly 1 final image.\n- No extra pages, no variants, no mockups.",
+    "sort_order": 1,
+    "is_active": true,
+    "created_at": { "$date": "2025-12-18T00:00:00.000Z" },
+    "updated_at": { "$date": "2025-12-18T00:00:00.000Z" }
+  },
+  {
+    "key": "colorful_poppy",
+    "title": "Colorful + poppy (same style)",
+    "image_key": "/presets/colorful_poppy.png",
+    "prompt": "You will receive a Note (may include typed text, handwriting, diagrams, screenshots).\n\nGoal:\nCreate ONE vibrant, modern, colorful study poster image that keeps the content and structure of the Note, but makes it feel fun, energetic, and easy to scan.\n\nHard rules:\n- Use only information present in the Note. Do not invent facts.\n- Keep text readable on a phone screen: strong contrast, no tiny text.\n- If handwriting is unclear, use the simplest conservative interpretation or omit it.\n\nColor and design:\n- Use 4 to 6 consistent accent colors (vibrant but not neon).\n- Color-code sections and highlights.\n- Use friendly icons, callouts, and simple shapes to guide the eye.\n- Background must remain light and clean, not noisy.\n\nLayout:\n- Portrait layout.\n- Title at the top.\n- 3 to 7 colored section cards with headings + bullets.\n- Add a “Key Takeaways” box at the bottom with 3 to 5 bullets.\n- Use clear hierarchy: big headings, medium subheadings, compact bullets.\n\nStyle:\n- Bright, modern educational infographic.\n- Rounded corners, soft shadows, consistent spacing.\n\nOutput:\n- Return exactly 1 final image.\n- No extra pages, no variants, no mockups.",
+    "sort_order": 2,
+    "is_active": true,
+    "created_at": { "$date": "2025-12-18T00:00:00.000Z" },
+    "updated_at": { "$date": "2025-12-18T00:00:00.000Z" }
+  },
+  {
+    "key": "readable_with_diagrams",
+    "title": "More readable + diagrams",
+    "image_key": "/presets/readable_with_diagrams.png",
+    "prompt": "You will receive a Note (may include typed text, handwriting, diagrams, screenshots).\n\nGoal:\nCreate ONE clean, highly readable study poster image that preserves the original content, and adds or redraws diagrams only when they clarify the material.\n\nHard rules:\n- Use only information present in the Note. Do not invent facts.\n- If handwriting is unclear, keep it minimal, mark as [unclear], or omit.\n- All text and diagram labels must be readable on a phone screen.\n\nDiagram rules:\n- Only include diagrams that explain relationships, such as flowcharts, cycles, hierarchies, timelines, comparisons, or cause effect.\n- If the Note already has diagrams, redraw them cleanly with consistent shapes and labels.\n- Keep diagrams simple: few nodes, clear arrows, minimal decoration.\n- Every diagram must have a short title or label.\n\nLayout:\n- Portrait layout.\n- Title at the top.\n- 3 to 6 content sections.\n- Include 1 to 3 small diagrams placed near the sections they explain.\n- Add a “Key Takeaways” box at the bottom with 3 to 5 bullets.\n\nStyle:\n- Clean and minimal.\n- Subtle accent colors for headings and diagram elements.\n- Clear spacing and alignment.\n\nOutput:\n- Return exactly 1 final image.\n- No extra pages, no variants, no mockups.",
+    "sort_order": 3,
+    "is_active": true,
+    "created_at": { "$date": "2025-12-18T00:00:00.000Z" },
+    "updated_at": { "$date": "2025-12-18T00:00:00.000Z" }
+  },
+  {
+    "key": "colorful_with_diagrams",
+    "title": "Colorful + poppy + diagrams",
+    "image_key": "/presets/colorful_with_diagrams.png",
+    "prompt": "You will receive a Note (may include typed text, handwriting, diagrams, screenshots).\n\nGoal:\nCreate ONE vibrant, colorful study poster image that preserves the Note’s content and meaning, and uses clear diagrams to make concepts easy to understand.\n\nHard rules:\n- Use only information present in the Note. Do not invent facts.\n- Maintain excellent readability: strong contrast, consistent font sizes, no tiny text.\n- If handwriting is unclear, use the simplest conservative interpretation or omit.\n\nColor and design:\n- Use 4 to 6 consistent accent colors.\n- Color-code sections and key terms.\n- Use friendly icons and callouts sparingly to guide attention.\n- Background stays light and clean.\n\nDiagram rules:\n- Add or redraw 1 to 3 diagrams when they clarify relationships.\n- Diagrams should be simple and clean: consistent shapes, readable labels, clear arrows.\n- Place diagrams directly near the section they support.\n\nLayout:\n- Portrait layout.\n- Title at the top.\n- 3 to 7 colorful section cards.\n- Add a “Key Takeaways” box at the bottom with 3 to 5 bullets.\n\nStyle:\n- Modern educational infographic.\n- Rounded corners, soft shadows, balanced spacing.\n\nOutput:\n- Return exactly 1 final image.\n- No extra pages, no variants, no mockups.",
+    "sort_order": 4,
+    "is_active": true,
+    "created_at": { "$date": "2025-12-18T00:00:00.000Z" },
+    "updated_at": { "$date": "2025-12-18T00:00:00.000Z" }
+  },
+  {
+    "key": "cheatsheet_text_only",
+    "title": "Cheat sheet (no diagrams, max text)",
+    "image_key": "/presets/cheatsheet_text_only.png",
+    "prompt": "You will receive a Note (may include typed text, handwriting, diagrams, screenshots).\n\nGoal:\nCreate ONE dense, structured, highly readable cheat sheet image that fits as much important content as possible, without diagrams.\n\nHard rules:\n- Use only information present in the Note. Do not invent facts.\n- Do not include diagrams, drawings, or decorative visuals.\n- Maximize information density while keeping text readable on a phone screen.\n- If handwriting is unclear, omit it rather than guessing.\n\nCheat sheet formatting:\n- Use compact headings, subheadings, and short bullet points.\n- Prefer concise phrasing and compression over long sentences.\n- Convert lists into tight bullet clusters.\n- Use compact tables when it saves space (only if the Note already implies a table-like structure).\n- Use subtle separators to create clear sections.\n\nLayout:\n- Portrait layout.\n- Title at the top.\n- 5 to 12 compact sections (smaller sections are fine).\n- Add a “Most Tested” or “Key Takeaways” box at the bottom with 5 to 8 bullets.\n\nStyle:\n- Minimal, clean, high contrast.\n- Very limited color, only for headings or highlights.\n\nOutput:\n- Return exactly 1 final image.\n- No extra pages, no variants, no mockups.",
+    "sort_order": 5,
+    "is_active": true,
+    "created_at": { "$date": "2025-12-18T00:00:00.000Z" },
+    "updated_at": { "$date": "2025-12-18T00:00:00.000Z" }
+  }
+]
