@@ -3,6 +3,7 @@
 
 import Image from "next/image";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Plus, Trash2, ExternalLink } from "lucide-react";
 
 import type { PublicNoteGeneration, PublicStylePreset } from "@/lib/models/noteGeneration";
@@ -51,6 +52,8 @@ function fileLabelFromUrl(url: string): string {
 }
 
 export default function PlaygroundPage() {
+    const router = useRouter();
+
     const [title, setTitle] = useState("");
     const [inputText, setInputText] = useState("");
 
@@ -69,6 +72,7 @@ export default function PlaygroundPage() {
     const [isSaving, setIsSaving] = useState(false);
     const [isUploading, setIsUploading] = useState(false);
     const [isDeletingFile, setIsDeletingFile] = useState(false);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
     const [didUpdateFlash, setDidUpdateFlash] = useState(false);
 
@@ -120,7 +124,7 @@ export default function PlaygroundPage() {
             setPresets(sorted);
         }
 
-        loadPresets();
+        void loadPresets();
         return () => {
             cancelled = true;
         };
@@ -172,6 +176,11 @@ export default function PlaygroundPage() {
                     setSelectedPresetId(null);
                     setCustomPrompt(gen.style?.custom_prompt ?? "");
                 }
+
+                if (gen.status === "queued" || gen.status === "processing") {
+                    router.push(`/dashboard/history/${gen.id}`);
+                    return;
+                }
             } catch (e) {
                 const msg = e instanceof Error ? e.message : "Failed to load pending generation";
                 if (!cancelled) setError(msg);
@@ -180,11 +189,11 @@ export default function PlaygroundPage() {
             }
         }
 
-        loadPending();
+        void loadPending();
         return () => {
             cancelled = true;
         };
-    }, []);
+    }, [router]);
 
     // If presets finish loading and we still don't have a selected preset id, pick first.
     useEffect(() => {
@@ -213,7 +222,6 @@ export default function PlaygroundPage() {
             clearSaveTimer();
             if (updateFlashTimerRef.current) window.clearTimeout(updateFlashTimerRef.current);
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     function buildUpdatePayload(): UpdatePendingPayload | null {
@@ -292,12 +300,22 @@ export default function PlaygroundPage() {
     useEffect(() => {
         if (!generation?.id) return;
         if (isBootLoading) return;
+        if (generation.status !== "pending") return;
         scheduleAutosave();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [title, inputText, styleMode, selectedPresetId, customPrompt, generation?.id, isBootLoading]);
+    }, [
+        title,
+        inputText,
+        styleMode,
+        selectedPresetId,
+        customPrompt,
+        generation?.id,
+        generation?.status,
+        isBootLoading,
+    ]);
 
     async function uploadFileNow(file: File): Promise<void> {
         if (!generation?.id) throw new Error("No pending generation");
+        if (generation.status !== "pending") throw new Error("Draft is locked");
 
         setError(null);
         setNotice(null);
@@ -319,7 +337,7 @@ export default function PlaygroundPage() {
             }
 
             const updated = await refreshGeneration(generation.id);
-            const count = (updated.input_files?.length ?? 0);
+            const count = updated.input_files?.length ?? 0;
 
             setNotice(`Uploaded and attached (${count}/${MAX_FILES}).`);
         } finally {
@@ -337,6 +355,12 @@ export default function PlaygroundPage() {
         if (!generation?.id) {
             if (fileInputRef.current) fileInputRef.current.value = "";
             setError("Pending generation not ready yet");
+            return;
+        }
+
+        if (generation.status !== "pending") {
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            setError("Draft is locked while generating");
             return;
         }
 
@@ -367,7 +391,7 @@ export default function PlaygroundPage() {
             return;
         }
 
-        if (isUploading || isDeletingFile) {
+        if (isUploading || isDeletingFile || isSaving || isSubmitting) {
             if (fileInputRef.current) fileInputRef.current.value = "";
             return;
         }
@@ -382,6 +406,7 @@ export default function PlaygroundPage() {
 
     async function deleteAttachedFile(fileUrlOrKey: string): Promise<void> {
         if (!generation?.id) throw new Error("No pending generation");
+        if (generation.status !== "pending") throw new Error("Draft is locked");
 
         setError(null);
         setNotice(null);
@@ -408,12 +433,43 @@ export default function PlaygroundPage() {
         }
     }
 
+    async function submitToQueue(id: string): Promise<PublicNoteGeneration> {
+        const res = await fetch(`/api/generations/${id}/submit`, {
+            method: "POST",
+            cache: "no-store",
+        });
+
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data?.error ?? "Failed to submit generation");
+        }
+
+        const data = (await res.json().catch(() => null)) as
+            | { ok?: boolean; generation?: PublicNoteGeneration }
+            | PublicNoteGeneration
+            | null;
+
+        const gen =
+            data && typeof (data as any).id === "string"
+                ? (data as PublicNoteGeneration)
+                : (data as any)?.generation;
+
+        if (!gen?.id) throw new Error("Invalid submit response");
+        setGeneration(gen);
+        return gen;
+    }
+
     async function onGenerate() {
         setError(null);
         setNotice(null);
 
         if (!generation?.id) {
             setError("Pending generation not ready yet");
+            return;
+        }
+
+        if (generation.status !== "pending") {
+            router.push(`/dashboard/history/${generation.id}`);
             return;
         }
 
@@ -440,22 +496,32 @@ export default function PlaygroundPage() {
             return;
         }
 
-        setIsSaving(true);
+        setIsSubmitting(true);
+
+        // 1) Save draft
         try {
+            setIsSaving(true);
             await patchPending(payload);
             lastSavedSignatureRef.current = JSON.stringify(payload);
         } catch (e) {
             const msg = e instanceof Error ? e.message : "Failed to save draft";
             setError(msg);
             setIsSaving(false);
+            setIsSubmitting(false);
             return;
         } finally {
             setIsSaving(false);
         }
 
-        setNotice("Draft is ready. Next step is Submit and polling.");
-        // eslint-disable-next-line no-console
-        console.log("Draft ready:", generation.id);
+        // 2) Submit to queue
+        try {
+            const submitted = await submitToQueue(generation.id);
+            router.push(`/dashboard/history/${submitted.id}`);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : "Failed to submit generation";
+            setError(msg);
+            setIsSubmitting(false);
+        }
     }
 
     if (isBootLoading) {
@@ -469,7 +535,9 @@ export default function PlaygroundPage() {
     const gridClass = "grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6";
     const attachedFiles = generation?.input_files ?? [];
     const canUploadMore = attachedFiles.length < MAX_FILES;
-    const isBusy = isUploading || isDeletingFile || isSaving;
+    const isBusy = isUploading || isDeletingFile || isSaving || isSubmitting;
+
+    const canEdit = generation?.status === "pending" && !isBusy;
 
     return (
         <div className="space-y-6">
@@ -518,6 +586,7 @@ export default function PlaygroundPage() {
                                     isTitleManualRef.current = Boolean(v.trim());
                                 }}
                                 placeholder="Optional name"
+                                disabled={!canEdit}
                             />
                             <div className="text-xs text-zinc-600 dark:text-zinc-400">
                                 Auto fills from the first line of Notes text until you type a custom title.
@@ -535,7 +604,7 @@ export default function PlaygroundPage() {
                                         type="file"
                                         accept="image/*,application/pdf"
                                         onChange={(e) => void onPickFile(e.target.files)}
-                                        disabled={isUploading || isDeletingFile}
+                                        disabled={!canEdit}
                                     />
 
                                     <div className="text-xs text-zinc-600 dark:text-zinc-400">
@@ -587,7 +656,7 @@ export default function PlaygroundPage() {
                                                             variant="destructive"
                                                             size="sm"
                                                             onClick={() => void deleteAttachedFile(u)}
-                                                            disabled={isBusy}
+                                                            disabled={!canEdit}
                                                         >
                                                             <Trash2 className="mr-2 h-4 w-4" />
                                                             {isDeletingFile ? "Deleting..." : "Delete"}
@@ -619,13 +688,16 @@ export default function PlaygroundPage() {
                                             key={p.id}
                                             type="button"
                                             onClick={() => {
+                                                if (!canEdit) return;
                                                 setStyleMode("preset");
                                                 setSelectedPresetId(p.id);
                                             }}
                                             aria-pressed={active}
+                                            disabled={!canEdit}
                                             className={[
                                                 "group relative w-full overflow-hidden rounded-xl border text-left transition",
                                                 "shadow-sm hover:shadow-lg active:shadow-md",
+                                                !canEdit ? "opacity-60 cursor-not-allowed" : "",
                                                 active
                                                     ? "border-zinc-900 bg-zinc-50 shadow-lg dark:border-white dark:bg-white/10"
                                                     : "border-zinc-200/70 bg-white/60 hover:bg-zinc-100/70 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
@@ -672,13 +744,16 @@ export default function PlaygroundPage() {
                                 <button
                                     type="button"
                                     onClick={() => {
+                                        if (!canEdit) return;
                                         setStyleMode("custom");
                                         setSelectedPresetId(null);
                                     }}
                                     aria-pressed={styleMode === "custom"}
+                                    disabled={!canEdit}
                                     className={[
                                         "group relative w-full overflow-hidden rounded-xl border text-left transition",
                                         "shadow-sm hover:shadow-lg active:shadow-md",
+                                        !canEdit ? "opacity-60 cursor-not-allowed" : "",
                                         styleMode === "custom"
                                             ? "border-zinc-900 bg-zinc-50 shadow-lg dark:border-white dark:bg-white/10"
                                             : "border-zinc-200/70 bg-white/60 hover:bg-zinc-100/70 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
@@ -715,6 +790,7 @@ export default function PlaygroundPage() {
                                         onChange={(e) => setCustomPrompt(e.target.value)}
                                         placeholder='Example: "Make it more artistic and colorful, keep text readable."'
                                         className="min-h-28"
+                                        disabled={!canEdit}
                                     />
                                     <div className="text-xs text-zinc-600 dark:text-zinc-400">
                                         Custom prompt is public safe. snapshot_prompt stays private in DB.
@@ -731,15 +807,23 @@ export default function PlaygroundPage() {
                                 onChange={(e) => setInputText(e.target.value)}
                                 placeholder="Paste text notes here (optional if you uploaded a file)"
                                 className="min-h-40"
+                                disabled={!canEdit}
                             />
                         </div>
 
                         <div className="text-xs text-zinc-600 dark:text-zinc-400">
-                            Draft autosaves while status is pending. {isSaving ? "Saving..." : didUpdateFlash ? "Updated" : null}
+                            Draft autosaves while status is pending.{" "}
+                            {isSaving ? "Saving..." : didUpdateFlash ? "Updated" : null}
                         </div>
 
                         {generation?.id ? (
                             <div className="text-xs text-zinc-600 dark:text-zinc-400">Draft id: {generation.id}</div>
+                        ) : null}
+
+                        {styleMode === "preset" && selectedPreset ? (
+                            <div className="text-xs text-zinc-600 dark:text-zinc-400">
+                                Selected preset: <span className="font-medium">{selectedPreset.title}</span>
+                            </div>
                         ) : null}
                     </CardContent>
                 </Card>

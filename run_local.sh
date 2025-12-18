@@ -6,6 +6,9 @@ DB_VOLUME="notes-polish-mongo-data"
 HOST_PORT="${MONGO_PORT:-27077}"
 IMAGE="mongo:7"
 
+NEXT_PID=""
+WORKER_PID=""
+
 seed_if_needed() {
   # Requires .env.local with MONGODB_URI
   if [ ! -f ".env.local" ]; then
@@ -36,8 +39,6 @@ seed_if_needed() {
     await client.connect();
     const db = client.db(dbName);
 
-    // Your new logic: since we only call this on fresh container creation,
-    // we can just insert. Still keep a safety check.
     const exists = (await db.listCollections({ name: colName }, { nameOnly: true }).toArray()).length > 0;
     if (exists) { console.log(`Seed skipped: collection ${dbName}.${colName} already exists.`); await client.close(); return; }
 
@@ -56,6 +57,19 @@ cleanup() {
   echo ""
   echo "Shutting down..."
 
+  # Stop Next
+  if [ -n "${NEXT_PID}" ] && kill -0 "${NEXT_PID}" >/dev/null 2>&1; then
+    kill "${NEXT_PID}" >/dev/null 2>&1 || true
+    echo "Next.js stopped: ${NEXT_PID}"
+  fi
+
+  # Stop Worker
+  if [ -n "${WORKER_PID}" ] && kill -0 "${WORKER_PID}" >/dev/null 2>&1; then
+    kill "${WORKER_PID}" >/dev/null 2>&1 || true
+    echo "Worker stopped: ${WORKER_PID}"
+  fi
+
+  # Stop Mongo container
   if command -v docker >/dev/null 2>&1; then
     if docker ps --format '{{.Names}}' 2>/dev/null | grep -q "^${DB_CONTAINER}$"; then
       docker stop "${DB_CONTAINER}" >/dev/null || true
@@ -76,7 +90,6 @@ if docker_ok; then
   echo "Docker detected. Starting MongoDB on localhost:${HOST_PORT} ..."
   echo "Using volume: ${DB_VOLUME} (data persists even if the container is deleted)"
 
-  # Ensure the volume exists (safe to call repeatedly).
   if ! docker volume ls --format '{{.Name}}' | grep -q "^${DB_VOLUME}$"; then
     docker volume create "${DB_VOLUME}" >/dev/null
   fi
@@ -115,5 +128,17 @@ else
 fi
 
 echo ""
-echo "Starting Next.js dev server (Ctrl+C to stop)..."
-npm run dev
+echo "Starting Worker + Next.js dev server (Ctrl+C to stop)..."
+
+# Start worker in background
+npm run worker &
+WORKER_PID=$!
+echo "Worker started: ${WORKER_PID}"
+
+# Start Next in background too, then wait on it
+npm run dev &
+NEXT_PID=$!
+echo "Next.js started: ${NEXT_PID}"
+
+# Keep script alive until Next exits (Ctrl+C triggers trap)
+wait "${NEXT_PID}"

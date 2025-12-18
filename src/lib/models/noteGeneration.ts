@@ -26,7 +26,7 @@ export const PublicNoteGenerationSchema = z.object({
 
     title: z.string().optional(),
 
-    status: z.enum(["pending", "processing", "processed", "failed"]),
+    status: z.enum(["pending", "queued", "processing", "processed", "failed"]),
     error: z.string().optional(),
 
     input_text: z.string().optional(),

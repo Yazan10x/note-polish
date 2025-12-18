@@ -121,7 +121,7 @@ Response `200`
   - `id`: string
   - `title`: string
   - `style_label`: string
-  - `status`: `"pending" | "processing" | "processed" | "failed"`
+  - `status`: "pending" | "queued" | "processing" | "processed" | "failed";
   - `created_at`: string (ISO)
 - `quick_actions`: array
   - `key`: `"open_playground" | "view_history"`

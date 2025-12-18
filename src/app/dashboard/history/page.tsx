@@ -37,8 +37,9 @@ const PAGE_SIZE = 12;
 
 const STATUS_OPTIONS = [
     { key: "all", label: "All statuses" },
+    { key: "queued", label: "Queued" },
     { key: "processing", label: "Processing" },
-    { key: "succeeded", label: "Succeeded" },
+    { key: "processed", label: "Processed" },
     { key: "failed", label: "Failed" },
 ] as const;
 

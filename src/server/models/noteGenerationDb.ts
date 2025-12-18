@@ -17,7 +17,12 @@ export type StylePresetDb = {
 };
 
 /** Note generations collection (private, stored in MongoDB) */
-export type NoteGenerationStatus = "pending" | "processing" | "processed" | "failed";
+export type NoteGenerationStatus =
+    | "pending"
+    | "queued"
+    | "processing"
+    | "processed"
+    | "failed";
 
 export type NoteGenerationDb = {
     _id: ObjectId;
