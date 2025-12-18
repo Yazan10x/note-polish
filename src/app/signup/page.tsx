@@ -13,9 +13,9 @@ export default function SignupPage() {
                     <div className="hidden lg:block">
                         <div className="space-y-4">
                             <div className="flex items-center gap-3">
-                                <Image src="/icon.png" alt="Notes Polish" width={44} height={44} priority />
+                                <Image src="/icon.png" alt="Note Polish" width={44} height={44} priority />
                                 <div>
-                                    <div className="text-sm font-medium">Notes Polish</div>
+                                    <div className="text-sm font-medium">Note Polish</div>
                                     <div className="text-xs text-zinc-600 dark:text-zinc-400">
                                         One page study sheets
                                     </div>

@@ -1,6 +1,6 @@
-# Notes Polish
+# Note Polish
 
-Notes Polish turns messy notes into a clean, one page study sheet you can actually review.
+Note Polish turns messy notes into a clean, one page study sheet you can actually review.
 Upload a screenshot or paste text, pick a style, and generate a print ready summary in seconds.
 
 ## Tech Stack

@@ -13,10 +13,10 @@ export default function Home() {
             <div className="mx-auto max-w-6xl px-6 py-16">
                 <header className="flex items-center justify-between">
                     <div className="flex items-center gap-4">
-                        <Image src="/icon.png" alt="Notes Polish" width={46} height={46} priority />
+                        <Image src="/icon.png" alt="Note Polish" width={46} height={46} priority />
                         <div className="leading-tight">
                             <div className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
-                                Notes Polish
+                                Note Polish
                             </div>
                             <div className="text-xs text-zinc-600 dark:text-zinc-400">
                                 One page study sheets
@@ -76,7 +76,7 @@ export default function Home() {
                                 <div>
                                     <div className="text-sm font-medium">How it works</div>
                                     <p className="mt-2 text-sm leading-relaxed text-zinc-600 dark:text-zinc-400">
-                                        Notes Polish takes messy, inconsistent notes and turns them
+                                        Note Polish takes messy, inconsistent notes and turns them
                                         into a clean, readable study sheet that is easier to review.
                                     </p>
                                 </div>
@@ -113,7 +113,7 @@ export default function Home() {
                 </section>
 
                 <footer className="mt-16 border-t border-zinc-200/70 pt-6 text-xs text-zinc-500 dark:border-white/10 dark:text-zinc-500">
-                    © {new Date().getFullYear()} Notes Polish
+                    © {new Date().getFullYear()} Note Polish
                 </footer>
             </div>
         </main>
