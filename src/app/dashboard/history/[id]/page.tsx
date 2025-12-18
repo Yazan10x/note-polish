@@ -2,7 +2,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import {
     ArrowLeft,
@@ -16,6 +16,7 @@ import {
     Image as ImageIcon,
     File,
     Download,
+    Loader2,
 } from "lucide-react";
 
 import type { PublicNoteGeneration } from "@/lib/models/noteGeneration";
@@ -35,140 +36,74 @@ type UrlKind = "image" | "pdf" | "other" | "unknown";
 export default function HistoryResultPage() {
     const router = useRouter();
     const params = useParams<{ id: string }>();
+    const id = useMemo(() => normalizeId(params?.id), [params?.id]);
 
-    const id = useMemo(() => {
-        const rawId = params?.id ?? "";
-        const m = String(rawId).match(/[a-f0-9]{24}/i);
-        return (m?.[0] ?? rawId).trim();
-    }, [params?.id]);
-
-    const [loading, setLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
-    const [gen, setGen] = useState<PublicNoteGeneration | null>(null);
-    const [copied, setCopied] = useState<string | null>(null);
-    const [downloading, setDownloading] = useState(false);
+    const { copied, copy } = useCopyToast();
+    const { downloading, downloadFromUrl } = useDownloader(setError);
 
-    // Input preview detection (works with extensionless /files/:id)
-    const [inputPreviewUrl, setInputPreviewUrl] = useState<string | null>(null);
-    const [inputPreviewKind, setInputPreviewKind] = useState<UrlKind>("unknown");
+    const { gen, loading, refresh } = useGeneration(id, setError);
 
-    useEffect(() => {
-        let cancelled = false;
+    const statusValue = String((gen as any)?.status || "unknown").trim() || "unknown";
+    const statusTokens = tokenizeStatus(statusValue);
 
-        async function load() {
-            if (!id) return;
-            setLoading(true);
-            setError(null);
+    // Poll only for these exact tokens (so "processed" will NOT poll)
+    const shouldPoll = hasAnyToken(statusTokens, ["queued", "queue", "pending", "processing", "running"]);
+    const isPending = hasAnyToken(statusTokens, ["queued", "queue", "pending"]);
+    const isRunning = hasAnyToken(statusTokens, ["processing", "running"]);
 
-            try {
-                const res = await fetch(`/api/generations/${encodeURIComponent(id)}`, { method: "GET" });
-                if (!res.ok) {
-                    const data = await safeJson(res);
-                    throw new Error(data?.error || "Failed to load generation");
-                }
-                const data = (await res.json()) as PublicNoteGeneration;
-                if (!cancelled) setGen(data);
-            } catch (e) {
-                if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load generation");
-            } finally {
-                if (!cancelled) setLoading(false);
-            }
-        }
+    const polling = usePollingRefresh({
+        enabled: Boolean(id) && shouldPoll,
+        intervalMs: 2000,
+        refresh,
+    });
 
-        void load();
-        return () => {
-            cancelled = true;
-        };
-    }, [id]);
-
-    const title = useMemo(() => getStr(gen as any, "title") || "Generation", [gen]);
-    const createdAt = useMemo(
-        () => getStr(gen as any, "created_at") || getStr(gen as any, "createdAt") || null,
-        [gen]
-    );
-
-    const statusValue = useMemo(() => String((gen as any)?.status || "unknown").trim() || "unknown", [gen]);
-    const statusLabel = useMemo(() => statusValue.replaceAll("_", " ").trim() || "unknown", [statusValue]);
-    const styleLabel = useMemo(() => formatStyle(gen), [gen]);
-
-    const inputText = useMemo(() => getStr(gen as any, "input_text") || getStr(gen as any, "inputText") || null, [gen]);
-
-    const inputFiles = useMemo(() => {
-        const files = (gen as any)?.input_files;
-        return Array.isArray(files) ? (files as string[]) : [];
-    }, [gen]);
-
-    const outputFiles = useMemo(() => {
-        const files = (gen as any)?.output_files;
-        return Array.isArray(files) ? (files as string[]) : [];
-    }, [gen]);
-
-    const outputImageUrl = useMemo(() => {
-        if (!gen) return null;
-        const g: any = gen;
-
-        const direct = g.output_image_url || g.outputImageUrl || g.result_image_url || null;
-        if (direct) return String(direct);
-
-        const preview = pickFirstImageUrl(g.preview_images);
-        if (preview) return preview;
-
-        const fromOutputFiles = pickFirstImageUrl(g.output_files);
-        if (fromOutputFiles) return fromOutputFiles;
-
-        return null;
-    }, [gen]);
-
-    const isPending = statusValue.toLowerCase().includes("pending") || statusValue.toLowerCase().includes("queue");
-    const isRunning = statusValue.toLowerCase().includes("process") || statusValue.toLowerCase().includes("run");
     const isBusy = loading || downloading;
 
-    // Resolve input preview kind/url
-    useEffect(() => {
-        let cancelled = false;
+    const title = getFirstString(gen as any, ["title"]) || "Generation";
+    const createdAt = getFirstString(gen as any, ["created_at", "createdAt"]);
+    const statusLabel = statusValue.replaceAll("_", " ").trim() || "unknown";
+    const styleLabel = formatStyle(gen);
 
-        async function resolveInputPreview() {
-            if (!inputFiles.length) {
-                setInputPreviewUrl(null);
-                setInputPreviewKind("unknown");
-                return;
-            }
+    const inputText = getFirstString(gen as any, ["input_text", "inputText"]);
 
-            // Fast path by extension / data URL
-            const extImg = pickFirstImageUrl(inputFiles);
-            if (extImg) {
-                setInputPreviewUrl(extImg);
-                setInputPreviewKind("image");
-                return;
-            }
+    // IMPORTANT: memoize these arrays so hooks depending on them do not re-run every render
+    const inputFiles = useMemo(() => getStringArray((gen as any)?.input_files), [gen]);
+    const outputFiles = useMemo(() => getStringArray((gen as any)?.output_files), [gen]);
+    const previewImages = useMemo(() => getStringArray((gen as any)?.preview_images), [gen]);
 
-            const extPdf = pickFirstPdfUrl(inputFiles);
-            if (extPdf) {
-                setInputPreviewUrl(extPdf);
-                setInputPreviewKind("pdf");
-                return;
-            }
+    // Input preview: works for extensionless /files/:id via HEAD
+    const inputPreview = useBestPreview(inputFiles);
 
-            // Slow path by HEAD content-type (for /files/:id)
-            const first = inputFiles[0] ?? null;
-            if (!first) {
-                setInputPreviewUrl(null);
-                setInputPreviewKind("unknown");
-                return;
-            }
+    // Output preview: build candidates + choose best (supports extensionless)
+    const outputCandidates = useMemo(() => {
+        if (!gen) return [];
+        const g: any = gen;
 
-            setInputPreviewUrl(first);
-            setInputPreviewKind("unknown");
+        const out: string[] = [];
+        const direct = getFirstString(g, ["output_image_url", "outputImageUrl", "result_image_url"]);
+        if (direct) out.push(direct);
 
-            const kind = await detectUrlKind(first);
-            if (!cancelled) setInputPreviewKind(kind);
-        }
+        for (const u of previewImages) out.push(u);
+        for (const u of outputFiles) out.push(u);
 
-        void resolveInputPreview();
-        return () => {
-            cancelled = true;
-        };
-    }, [inputFiles]);
+        return uniqueStrings(out);
+    }, [gen, previewImages, outputFiles]);
+
+    const outputPreview = useBestPreview(outputCandidates);
+
+    const canShowInputPreview = Boolean(inputPreview.url) && (inputPreview.kind === "image" || inputPreview.kind === "pdf");
+    const canShowOutputPreview =
+        Boolean(outputPreview.url) && (outputPreview.kind === "image" || outputPreview.kind === "pdf");
+
+    const suggestedOutputName = useMemo(() => {
+        const base = String(title || "output").trim().slice(0, 80) || "output";
+        const safe = base.replace(/[\\/:*?"<>|]+/g, "_").trim() || "output";
+
+        if (!outputPreview.url) return `${safe}.png`;
+        if (outputPreview.kind === "pdf") return `${safe}.pdf`;
+        return `${safe}.${guessImageExt(outputPreview.url)}`;
+    }, [title, outputPreview.url, outputPreview.kind]);
 
     function openInPlayground() {
         if (!gen) return;
@@ -192,69 +127,36 @@ export default function HistoryResultPage() {
         }
     }
 
-    function onCopy(text: string) {
-        try {
-            navigator.clipboard?.writeText(text);
-            setCopied(text);
-            window.setTimeout(() => setCopied(null), 900);
-        } catch {
-            // ignore
-        }
-    }
-
-    async function downloadFromUrl(url: string, suggestedName?: string) {
-        setError(null);
-        const name = suggestedName?.trim() || filenameFromUrl(url) || "download";
-
-        setDownloading(true);
-        try {
-            const res = await fetch(url, { method: "GET" });
-            if (!res.ok) throw new Error("Download failed");
-
-            const blob = await res.blob();
-            const blobUrl = URL.createObjectURL(blob);
-
-            const a = document.createElement("a");
-            a.href = blobUrl;
-            a.download = name;
-            document.body.appendChild(a);
-            a.click();
-            a.remove();
-
-            URL.revokeObjectURL(blobUrl);
-        } catch {
-            window.open(url, "_blank", "noopener,noreferrer");
-        } finally {
-            setDownloading(false);
-        }
-    }
-
-    const suggestedOutputName = useMemo(() => {
-        const base = String(title || "output").trim().slice(0, 80) || "output";
-        const safe = base.replace(/[\\/:*?"<>|]+/g, "_").trim() || "output";
-        const ext = outputImageUrl ? guessImageExt(outputImageUrl) : "";
-        return ext ? `${safe}.${ext}` : `${safe}.png`;
-    }, [title, outputImageUrl]);
-
-    const canShowInputPreview = Boolean(inputPreviewUrl) && (inputPreviewKind === "image" || inputPreviewKind === "pdf");
-
     return (
         <div className="space-y-6">
             <HeaderBar
                 loading={loading}
+                polling={polling}
                 gen={gen}
                 title={title}
                 statusLabel={statusLabel}
                 styleLabel={styleLabel}
                 createdAt={createdAt}
                 copied={copied}
-                onCopy={onCopy}
+                onCopy={copy}
                 onOpenPlayground={openInPlayground}
                 onDelete={onDelete}
-                outputImageUrl={outputImageUrl}
+                outputPreviewUrl={outputPreview.url}
                 isBusy={isBusy}
-                onDownloadOutput={() => outputImageUrl && downloadFromUrl(outputImageUrl, suggestedOutputName)}
+                onDownloadOutput={() => outputPreview.url && downloadFromUrl(outputPreview.url, suggestedOutputName)}
             />
+
+            {shouldPoll ? (
+                <ProcessingBanner
+                    message={
+                        isPending
+                            ? "Queued. Refreshing every 2 seconds."
+                            : isRunning
+                                ? "Processing. Refreshing every 2 seconds."
+                                : "Refreshing every 2 seconds."
+                    }
+                />
+            ) : null}
 
             {error ? (
                 <div className="rounded-xl border border-red-200/70 bg-red-50/60 px-3 py-2 text-sm text-red-800 dark:border-red-500/20 dark:bg-red-500/10 dark:text-red-200">
@@ -263,69 +165,43 @@ export default function HistoryResultPage() {
             ) : null}
 
             <div className="grid gap-6 lg:grid-cols-12">
-                <div className="lg:col-span-8 space-y-6">
+                <div className="space-y-6 lg:col-span-8">
                     <SectionCard title="Output preview">
                         {loading ? (
                             <Skeleton block />
                         ) : gen ? (
                             <div className="space-y-4">
-                                {outputImageUrl ? (
+                                {canShowOutputPreview && outputPreview.url ? (
                                     <>
-                                        <ImagePreview
-                                            url={outputImageUrl}
-                                            alt="Output"
-                                            // Use plain <img> so cookies are sent to /files/:id routes (Next image optimizer breaks this)
+                                        {outputPreview.kind === "image" ? (
+                                            <ImagePreview url={outputPreview.url} alt="Output" />
+                                        ) : (
+                                            <div className="overflow-hidden rounded-xl border border-zinc-200/70 bg-white/60 dark:border-white/10 dark:bg-white/5">
+                                                <iframe title="Output PDF preview" src={outputPreview.url} className="h-[520px] w-full" />
+                                            </div>
+                                        )}
+
+                                        <UrlActions
+                                            url={outputPreview.url}
+                                            copied={copied}
+                                            isBusy={isBusy}
+                                            onCopy={copy}
+                                            onDownload={() => downloadFromUrl(outputPreview.url!, suggestedOutputName)}
+                                            downloadLabel={downloading ? "Downloading..." : "Download"}
+                                            showDownload
                                         />
-                                        <div className="flex flex-wrap gap-2">
-                                            <Button variant="outline" className="gap-2" asChild disabled={isBusy}>
-                                                <a href={outputImageUrl} target="_blank" rel="noreferrer">
-                                                    <ExternalLink className="h-4 w-4" />
-                                                    Open
-                                                </a>
-                                            </Button>
-
-                                            <Button
-                                                variant="outline"
-                                                className="gap-2"
-                                                disabled={isBusy}
-                                                onClick={() => onCopy(outputImageUrl)}
-                                            >
-                                                <Copy className="h-4 w-4" />
-                                                Copy url
-                                            </Button>
-
-                                            <Button
-                                                variant="outline"
-                                                className="gap-2"
-                                                disabled={isBusy}
-                                                onClick={() => void downloadFromUrl(outputImageUrl, suggestedOutputName)}
-                                            >
-                                                <Download className="h-4 w-4" />
-                                                {downloading ? "Downloading..." : "Download"}
-                                            </Button>
-
-                                            {copied === outputImageUrl ? (
-                                                <span className="self-center text-xs text-emerald-700 dark:text-emerald-300">
-                                                    Copied
-                                                </span>
-                                            ) : null}
-                                        </div>
                                     </>
                                 ) : (
                                     <EmptyBox>
-                                        {isPending || isRunning
+                                        {shouldPoll
                                             ? "This generation is not finished yet."
-                                            : "No output image found for this generation."}
+                                            : outputFiles.length
+                                                ? "Output preview unavailable. See output files below."
+                                                : "No output file found for this generation."}
                                     </EmptyBox>
                                 )}
 
-                                {outputFiles.length ? (
-                                    <FileList
-                                        title="Output files"
-                                        files={outputFiles}
-                                        onCopy={onCopy}
-                                    />
-                                ) : null}
+                                {outputFiles.length ? <FileList title="Output files" files={outputFiles} onCopy={copy} /> : null}
                             </div>
                         ) : (
                             <EmptyBox>Not found.</EmptyBox>
@@ -337,46 +213,25 @@ export default function HistoryResultPage() {
                             <Skeleton />
                         ) : gen ? (
                             <div className="space-y-4">
-                                {canShowInputPreview && inputPreviewUrl ? (
+                                {canShowInputPreview && inputPreview.url ? (
                                     <div className="rounded-xl border border-zinc-200/70 bg-white/60 p-3 dark:border-white/10 dark:bg-white/5">
-                                        {inputPreviewKind === "image" ? (
-                                            <ImagePreview url={inputPreviewUrl} alt="Input preview" />
-                                        ) : inputPreviewKind === "pdf" ? (
+                                        {inputPreview.kind === "image" ? (
+                                            <ImagePreview url={inputPreview.url} alt="Input preview" />
+                                        ) : (
                                             <div className="overflow-hidden rounded-xl border border-zinc-200/70 bg-white/60 dark:border-white/10 dark:bg-white/5">
-                                                <iframe title="Input PDF preview" src={inputPreviewUrl} className="h-[520px] w-full" />
+                                                <iframe title="Input PDF preview" src={inputPreview.url} className="h-[520px] w-full" />
                                             </div>
-                                        ) : null}
+                                        )}
 
-                                        <div className="mt-3 flex flex-wrap gap-2">
-                                            <Button variant="outline" className="gap-2" asChild disabled={isBusy}>
-                                                <a href={inputPreviewUrl} target="_blank" rel="noreferrer">
-                                                    <ExternalLink className="h-4 w-4" />
-                                                    Open preview
-                                                </a>
-                                            </Button>
-
-                                            <Button
-                                                variant="outline"
-                                                className="gap-2"
-                                                disabled={isBusy}
-                                                onClick={() => onCopy(inputPreviewUrl)}
-                                            >
-                                                <Copy className="h-4 w-4" />
-                                                Copy url
-                                            </Button>
-
-                                            {copied === inputPreviewUrl ? (
-                                                <span className="self-center text-xs text-emerald-700 dark:text-emerald-300">
-                                                    Copied
-                                                </span>
-                                            ) : null}
+                                        <div className="mt-3">
+                                            <UrlActions url={inputPreview.url} copied={copied} isBusy={isBusy} onCopy={copy} />
                                         </div>
                                     </div>
                                 ) : (
                                     <EmptyBox>No input file preview available.</EmptyBox>
                                 )}
 
-                                <FileList title="Input files" files={inputFiles} onCopy={onCopy} />
+                                <FileList title="Input files" files={inputFiles} onCopy={copy} />
 
                                 <Card className="border-zinc-200/70 dark:border-white/10">
                                     <CardHeader className="pb-2">
@@ -405,7 +260,7 @@ export default function HistoryResultPage() {
                                     <CardTitle className="text-sm">Details</CardTitle>
                                 </CardHeader>
                                 <CardContent className="space-y-2 text-sm">
-                                    <Row label="Id" value={gen.id} onCopy={() => onCopy(gen.id)} />
+                                    <Row label="Id" value={gen.id} onCopy={() => copy(gen.id)} />
                                     <Row label="Title" value={(gen as any)?.title || "Untitled"} />
                                     <Row label="Status" value={statusLabel} />
                                     <Row label="Style" value={styleLabel} />
@@ -433,7 +288,12 @@ export default function HistoryResultPage() {
                             <CardTitle className="text-base">Quick Actions</CardTitle>
                         </CardHeader>
                         <CardContent className="space-y-2">
-                            <Button variant="outline" className="w-full justify-start gap-2" disabled={!gen} onClick={openInPlayground}>
+                            <Button
+                                variant="outline"
+                                className="w-full justify-start gap-2"
+                                disabled={!gen}
+                                onClick={openInPlayground}
+                            >
                                 <ExternalLink className="h-4 w-4" />
                                 Open in Playground
                             </Button>
@@ -442,19 +302,19 @@ export default function HistoryResultPage() {
                                 variant="outline"
                                 className="w-full justify-start gap-2"
                                 disabled={!gen}
-                                onClick={() => gen && onCopy(gen.id)}
+                                onClick={() => gen && copy(gen.id)}
                             >
                                 <Copy className="h-4 w-4" />
                                 Copy id
                             </Button>
 
-                            {outputImageUrl ? (
+                            {outputPreview.url ? (
                                 <>
                                     <Button
                                         variant="outline"
                                         className="w-full justify-start gap-2"
                                         disabled={!gen || isBusy}
-                                        onClick={() => onCopy(outputImageUrl)}
+                                        onClick={() => copy(outputPreview.url!)}
                                     >
                                         <ImageIcon className="h-4 w-4" />
                                         Copy output url
@@ -464,7 +324,7 @@ export default function HistoryResultPage() {
                                         variant="outline"
                                         className="w-full justify-start gap-2"
                                         disabled={!gen || isBusy}
-                                        onClick={() => void downloadFromUrl(outputImageUrl, suggestedOutputName)}
+                                        onClick={() => downloadFromUrl(outputPreview.url!, suggestedOutputName)}
                                     >
                                         <Download className="h-4 w-4" />
                                         {downloading ? "Downloading..." : "Download output"}
@@ -495,7 +355,7 @@ export default function HistoryResultPage() {
                             </div>
                             <div className="flex items-center gap-2">
                                 <ImageIcon className="h-4 w-4" />
-                                <span>Output image when ready</span>
+                                <span>Output preview when ready</span>
                             </div>
                             <div className="flex items-center gap-2">
                                 <File className="h-4 w-4" />
@@ -509,8 +369,224 @@ export default function HistoryResultPage() {
     );
 }
 
+/* -------------------------------- Hooks -------------------------------- */
+
+function useGeneration(id: string, setError: (v: string | null) => void) {
+    const [gen, setGen] = useState<PublicNoteGeneration | null>(null);
+    const [loading, setLoading] = useState(true);
+
+    const refreshInFlight = useRef(false);
+
+    const refresh = useCallback(async (): Promise<PublicNoteGeneration | null> => {
+        if (!id) return null;
+        if (refreshInFlight.current) return null;
+
+        refreshInFlight.current = true;
+        try {
+            const data = await fetchGeneration(id);
+            setGen(data);
+            return data;
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Failed to refresh generation");
+            return null;
+        } finally {
+            refreshInFlight.current = false;
+        }
+    }, [id, setError]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        async function load() {
+            if (!id) return;
+            setLoading(true);
+            setError(null);
+
+            try {
+                const data = await fetchGeneration(id);
+                if (!cancelled) setGen(data);
+            } catch (e) {
+                if (!cancelled) setError(e instanceof Error ? e.message : "Failed to load generation");
+            } finally {
+                if (!cancelled) setLoading(false);
+            }
+        }
+
+        void load();
+        return () => {
+            cancelled = true;
+        };
+    }, [id, setError]);
+
+    return { gen, loading, refresh };
+}
+
+function usePollingRefresh(opts: { enabled: boolean; intervalMs: number; refresh: () => Promise<unknown> }) {
+    const { enabled, intervalMs, refresh } = opts;
+
+    const [polling, setPolling] = useState(false);
+
+    const refreshRef = useRef(refresh);
+    const timeoutRef = useRef<number | null>(null);
+    const activeRef = useRef(false);
+
+    useEffect(() => {
+        refreshRef.current = refresh;
+    }, [refresh]);
+
+    useEffect(() => {
+        activeRef.current = enabled;
+
+        async function tick() {
+            if (!activeRef.current) return;
+
+            try {
+                await refreshRef.current();
+            } catch {
+                // refresh handles errors
+            } finally {
+                if (!activeRef.current) return;
+                timeoutRef.current = window.setTimeout(() => void tick(), intervalMs);
+            }
+        }
+
+        if (enabled) {
+            setPolling(true);
+            if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
+            timeoutRef.current = window.setTimeout(() => void tick(), intervalMs);
+        } else {
+            setPolling(false);
+            if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
+            timeoutRef.current = null;
+        }
+
+        return () => {
+            activeRef.current = false;
+            setPolling(false);
+            if (timeoutRef.current) window.clearTimeout(timeoutRef.current);
+            timeoutRef.current = null;
+        };
+    }, [enabled, intervalMs]);
+
+    return polling;
+}
+
+function useCopyToast() {
+    const [copied, setCopied] = useState<string | null>(null);
+
+    function copy(text: string) {
+        const t = String(text || "");
+        if (!t) return;
+
+        try {
+            navigator.clipboard?.writeText(t);
+            setCopied(t);
+            window.setTimeout(() => setCopied(null), 900);
+        } catch {
+            // ignore
+        }
+    }
+
+    return { copied, copy };
+}
+
+function useDownloader(setError: (v: string | null) => void) {
+    const [downloading, setDownloading] = useState(false);
+
+    async function downloadFromUrl(url: string, suggestedName?: string) {
+        setError(null);
+        const name = suggestedName?.trim() || filenameFromUrl(url) || "download";
+
+        setDownloading(true);
+        try {
+            const res = await fetch(url, { method: "GET" });
+            if (!res.ok) throw new Error("Download failed");
+
+            const blob = await res.blob();
+            const blobUrl = URL.createObjectURL(blob);
+
+            const a = document.createElement("a");
+            a.href = blobUrl;
+            a.download = name;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+
+            URL.revokeObjectURL(blobUrl);
+        } catch {
+            window.open(url, "_blank", "noopener,noreferrer");
+        } finally {
+            setDownloading(false);
+        }
+    }
+
+    return { downloading, downloadFromUrl };
+}
+
+function useBestPreview(urls: string[]) {
+    const [url, setUrl] = useState<string | null>(null);
+    const [kind, setKind] = useState<UrlKind>("unknown");
+
+    // CRITICAL FIX: depend on contents, not array identity, to avoid re-running every render
+    const urlsKey = useMemo(() => uniqueStrings(urls).join("\n"), [urls]);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        async function resolve() {
+            const list = uniqueStrings(urls);
+            if (!list.length) {
+                setUrl(null);
+                setKind("unknown");
+                return;
+            }
+
+            const fastImage = list.find(isImageLike);
+            if (fastImage) {
+                setUrl(fastImage);
+                setKind("image");
+                return;
+            }
+
+            const fastPdf = list.find(isPdfLike);
+            if (fastPdf) {
+                setUrl(fastPdf);
+                setKind("pdf");
+                return;
+            }
+
+            for (const candidate of list) {
+                setUrl(candidate);
+                setKind("unknown");
+
+                const detected = await detectUrlKind(candidate);
+                if (cancelled) return;
+
+                if (detected === "image" || detected === "pdf") {
+                    setUrl(candidate);
+                    setKind(detected);
+                    return;
+                }
+            }
+
+            setUrl(list[0] || null);
+            setKind("other");
+        }
+
+        void resolve();
+        return () => {
+            cancelled = true;
+        };
+    }, [urlsKey]); // only rerun when list content changes
+
+    return { url, kind };
+}
+
+/* ------------------------------ Components ------------------------------ */
+
 function HeaderBar(props: {
     loading: boolean;
+    polling: boolean;
     gen: PublicNoteGeneration | null;
     title: string;
     statusLabel: string;
@@ -520,12 +596,13 @@ function HeaderBar(props: {
     onCopy: (t: string) => void;
     onOpenPlayground: () => void;
     onDelete: () => void;
-    outputImageUrl: string | null;
+    outputPreviewUrl: string | null;
     isBusy: boolean;
     onDownloadOutput: () => void;
 }) {
     const {
         loading,
+        polling,
         gen,
         title,
         statusLabel,
@@ -535,7 +612,7 @@ function HeaderBar(props: {
         onCopy,
         onOpenPlayground,
         onDelete,
-        outputImageUrl,
+        outputPreviewUrl,
         isBusy,
         onDownloadOutput,
     } = props;
@@ -561,24 +638,22 @@ function HeaderBar(props: {
                 {gen ? (
                     <div className="flex flex-wrap items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
                         <StatusPill value={statusLabel} />
+
+                        {polling ? (
+                            <span className="inline-flex items-center gap-2 rounded-full border border-zinc-200/70 bg-white/60 px-2.5 py-1 text-xs text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                Refreshing
+                            </span>
+                        ) : null}
+
                         <MetaPill icon={<Palette className="h-3.5 w-3.5" />} label={styleLabel} />
-                        <MetaPill
-                            icon={<Calendar className="h-3.5 w-3.5" />}
-                            label={createdAt ? formatDate(createdAt) : "No date"}
-                        />
+                        <MetaPill icon={<Calendar className="h-3.5 w-3.5" />} label={createdAt ? formatDate(createdAt) : "No date"} />
                         <MetaPill icon={<Hash className="h-3.5 w-3.5" />} label={gen.id} truncate />
-                        <Button
-                            variant="ghost"
-                            size="icon"
-                            aria-label="Copy id"
-                            onClick={() => onCopy(gen.id)}
-                            className="h-8 w-8"
-                        >
+
+                        <Button variant="ghost" size="icon" aria-label="Copy id" onClick={() => onCopy(gen.id)} className="h-8 w-8">
                             <Copy className="h-4 w-4" />
                         </Button>
-                        {copied === gen.id ? (
-                            <span className="text-xs text-emerald-700 dark:text-emerald-300">Copied</span>
-                        ) : null}
+                        {copied === gen.id ? <span className="text-xs text-emerald-700 dark:text-emerald-300">Copied</span> : null}
                     </div>
                 ) : null}
             </div>
@@ -622,12 +697,12 @@ function HeaderBar(props: {
                             Copy id
                         </DropdownMenuItem>
 
-                        {outputImageUrl ? (
+                        {outputPreviewUrl ? (
                             <>
                                 <DropdownMenuItem asChild>
-                                    <a href={outputImageUrl} target="_blank" rel="noreferrer">
+                                    <a href={outputPreviewUrl} target="_blank" rel="noreferrer">
                                         <ImageIcon className="mr-2 h-4 w-4" />
-                                        Open output image
+                                        Open output
                                     </a>
                                 </DropdownMenuItem>
 
@@ -664,6 +739,21 @@ function HeaderBar(props: {
     );
 }
 
+function ProcessingBanner({ message }: { message: string }) {
+    return (
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-zinc-200/70 bg-white/60 px-3 py-2 text-sm text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+            <div className="flex items-center gap-2">
+                <span className="relative flex h-2.5 w-2.5">
+                    <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-500/60 opacity-75" />
+                    <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-blue-500" />
+                </span>
+                <span>{message}</span>
+            </div>
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">Auto refresh</span>
+        </div>
+    );
+}
+
 function SectionCard({ title, children }: { title: string; children: React.ReactNode }) {
     return (
         <Card className="border-zinc-200/70 bg-white/70 dark:border-white/10 dark:bg-white/5">
@@ -675,8 +765,44 @@ function SectionCard({ title, children }: { title: string; children: React.React
     );
 }
 
+function UrlActions(props: {
+    url: string;
+    copied: string | null;
+    isBusy: boolean;
+    onCopy: (t: string) => void;
+    onDownload?: () => void;
+    showDownload?: boolean;
+    downloadLabel?: string;
+}) {
+    const { url, copied, isBusy, onCopy, onDownload, showDownload, downloadLabel } = props;
+
+    return (
+        <div className="flex flex-wrap gap-2">
+            <Button variant="outline" className="gap-2" asChild disabled={isBusy}>
+                <a href={url} target="_blank" rel="noreferrer">
+                    <ExternalLink className="h-4 w-4" />
+                    Open
+                </a>
+            </Button>
+
+            <Button variant="outline" className="gap-2" disabled={isBusy} onClick={() => onCopy(url)}>
+                <Copy className="h-4 w-4" />
+                Copy url
+            </Button>
+
+            {showDownload ? (
+                <Button variant="outline" className="gap-2" disabled={isBusy} onClick={() => onDownload?.()}>
+                    <Download className="h-4 w-4" />
+                    {downloadLabel || "Download"}
+                </Button>
+            ) : null}
+
+            {copied === url ? <span className="self-center text-xs text-emerald-700 dark:text-emerald-300">Copied</span> : null}
+        </div>
+    );
+}
+
 function ImagePreview({ url, alt }: { url: string; alt: string }) {
-    // IMPORTANT: use plain <img> to avoid Next image optimizer (/_next/image) failing on authed /files/:id routes.
     return (
         <div className="relative overflow-hidden rounded-xl border border-zinc-200/70 bg-white/60 dark:border-white/10 dark:bg-white/5">
             <div className="relative aspect-[4/3] w-full">
@@ -693,15 +819,7 @@ function ImagePreview({ url, alt }: { url: string; alt: string }) {
     );
 }
 
-function FileList({
-                      title,
-                      files,
-                      onCopy,
-                  }: {
-    title: string;
-    files: string[];
-    onCopy: (u: string) => void;
-}) {
+function FileList({ title, files, onCopy }: { title: string; files: string[]; onCopy: (u: string) => void }) {
     return (
         <Card className="border-zinc-200/70 dark:border-white/10">
             <CardHeader className="pb-2">
@@ -765,15 +883,7 @@ function EmptyBox({ children }: { children: React.ReactNode }) {
     );
 }
 
-function MetaPill({
-                      icon,
-                      label,
-                      truncate,
-                  }: {
-    icon: React.ReactNode;
-    label: string;
-    truncate?: boolean;
-}) {
+function MetaPill({ icon, label, truncate }: { icon: React.ReactNode; label: string; truncate?: boolean }) {
     return (
         <span className="inline-flex items-center gap-1.5 rounded-full border border-zinc-200/70 bg-white/60 px-2.5 py-1 text-xs text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
             {icon}
@@ -806,13 +916,72 @@ function StatusPill({ value }: { value: string }) {
             ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
             : v.includes("fail") || v.includes("error")
                 ? "bg-red-500/10 text-red-700 dark:text-red-300"
-                : v.includes("process") || v.includes("run")
+                : v.includes("processing") || v.includes("running")
                     ? "bg-blue-500/10 text-blue-700 dark:text-blue-300"
                     : v.includes("queue") || v.includes("pending")
                         ? "bg-zinc-500/10 text-zinc-700 dark:text-zinc-300"
                         : "bg-zinc-500/10 text-zinc-700 dark:text-zinc-300";
 
     return <span className={["inline-flex items-center rounded-full px-2.5 py-1 text-xs font-medium", cls].join(" ")}>{value}</span>;
+}
+
+/* -------------------------------- Utils -------------------------------- */
+
+function tokenizeStatus(v: string): string[] {
+    return String(v || "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim()
+        .split(" ")
+        .filter(Boolean);
+}
+
+function hasAnyToken(tokens: string[], anyOf: string[]): boolean {
+    const set = new Set(tokens);
+    return anyOf.some((t) => set.has(t));
+}
+
+async function fetchGeneration(id: string): Promise<PublicNoteGeneration> {
+    const res = await fetch(`/api/generations/${encodeURIComponent(id)}`, {
+        method: "GET",
+        cache: "no-store",
+    });
+    if (!res.ok) {
+        const data = await safeJson(res);
+        throw new Error(data?.error || "Failed to load generation");
+    }
+    return (await res.json()) as PublicNoteGeneration;
+}
+
+function normalizeId(raw: unknown): string {
+    const v = String(raw ?? "").trim();
+    const m = v.match(/[a-f0-9]{24}/i);
+    return (m?.[0] ?? v).trim();
+}
+
+function uniqueStrings(arr: string[]) {
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const v of arr) {
+        const s = String(v || "").trim();
+        if (!s) continue;
+        if (seen.has(s)) continue;
+        seen.add(s);
+        out.push(s);
+    }
+    return out;
+}
+
+function getFirstString(obj: any, keys: string[]): string | null {
+    for (const k of keys) {
+        const v = obj?.[k];
+        if (typeof v === "string" && v.trim()) return v;
+    }
+    return null;
+}
+
+function getStringArray(value: unknown): string[] {
+    return Array.isArray(value) ? value.filter((x) => typeof x === "string") : [];
 }
 
 function formatDate(v: string | Date) {
@@ -842,36 +1011,14 @@ function formatStyle(gen: PublicNoteGeneration | null) {
     return "Preset";
 }
 
-function pickFirstImageUrl(value: unknown): string | null {
-    const arr = Array.isArray(value) ? value : [];
-    for (const item of arr) {
-        const u = typeof item === "string" ? item : null;
-        if (!u) continue;
-
-        const lower = u.toLowerCase();
-        if (
-            lower.includes(".png") ||
-            lower.includes(".jpg") ||
-            lower.includes(".jpeg") ||
-            lower.includes(".webp") ||
-            lower.startsWith("data:image/")
-        ) {
-            return u;
-        }
-    }
-    return null;
+function isImageLike(u: string) {
+    const lower = u.toLowerCase();
+    return lower.includes(".png") || lower.includes(".jpg") || lower.includes(".jpeg") || lower.includes(".webp") || lower.startsWith("data:image/");
 }
 
-function pickFirstPdfUrl(value: unknown): string | null {
-    const arr = Array.isArray(value) ? value : [];
-    for (const item of arr) {
-        const u = typeof item === "string" ? item : null;
-        if (!u) continue;
-
-        const lower = u.toLowerCase();
-        if (lower.includes(".pdf") || lower.startsWith("data:application/pdf")) return u;
-    }
-    return null;
+function isPdfLike(u: string) {
+    const lower = u.toLowerCase();
+    return lower.includes(".pdf") || lower.startsWith("data:application/pdf");
 }
 
 async function detectUrlKind(url: string): Promise<UrlKind> {
@@ -916,11 +1063,6 @@ function guessImageExt(url: string): string {
     if (u.includes(".jpeg")) return "jpeg";
     if (u.includes(".jpg")) return "jpg";
     return "png";
-}
-
-function getStr(obj: any, key: string): string | null {
-    const v = obj?.[key];
-    return typeof v === "string" ? v : null;
 }
 
 async function safeJson(res: Response) {
