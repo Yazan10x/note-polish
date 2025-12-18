@@ -230,6 +230,25 @@ export default function DashboardPage() {
                                 </CardContent>
                             </Card>
                         </div>
+                        <footer className="mt-16 border-t border-zinc-200/70 pt-6 text-xs text-zinc-500 dark:border-white/10 dark:text-zinc-500">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    © {new Date().getFullYear()} Note Polish
+                                </div>
+
+                                <div>
+                                    Built by{" "}
+                                    <a
+                                        href="https://armoush.com"
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="font-medium text-zinc-900 underline underline-offset-4 dark:text-zinc-100"
+                                    >
+                                        Yazan Armoush
+                                    </a>
+                                </div>
+                            </div>
+                        </footer>
                     </div>
                 </main>
             </div>

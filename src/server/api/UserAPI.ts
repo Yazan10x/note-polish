@@ -23,6 +23,10 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
+
+
+
+
 function createSessionToken(): string {
   return randomBytes(32).toString("hex");
 }
