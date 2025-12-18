@@ -75,10 +75,7 @@ export class UserAPI {
 
     const email = normalizeEmail(input.email);
 
-    const existing = await users.findOne(
-      { email },
-      { projection: { _id: 1 } }
-    );
+    const existing = await users.findOne({ email }, { projection: { _id: 1 } });
     if (existing) {
       throw new Error("Email already in use");
     }
@@ -147,10 +144,7 @@ export class UserAPI {
 
     if (!session) return null;
 
-    const user = await users.findOne(
-      { _id: session.user_id },
-      { projection: { password_hash: 0 } }
-    );
+    const user = await users.findOne({ _id: session.user_id });
 
     if (!user) return null;
     return toPublicUser(user);

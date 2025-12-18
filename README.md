@@ -35,5 +35,5 @@ Your `.env.local` should include:
 ```env
 OPENAI_API_KEY=your_key_here
 MONGODB_URI=mongodb://127.0.0.1:27077
-MONGODB_DB=notes_polish
+MONGODB_DB=note_polish
 ```

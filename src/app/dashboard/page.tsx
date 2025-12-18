@@ -2,9 +2,11 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Bell, Home, LineChart, Package, Search, Settings, Moon, Sun } from "lucide-react";
 
+import type { PublicUser } from "@/lib/models/user";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -18,10 +20,75 @@ import {
 } from "@/components/ui/dropdown-menu";
 
 export default function DashboardPage() {
-    const tmp_user = {
-        full_name: "Yazan Armoush",
-        email: "yazan@armoush.com",
-    };
+    const router = useRouter();
+
+    const [user, setUser] = useState<PublicUser | null>(null);
+    const [isLoadingUser, setIsLoadingUser] = useState(true);
+    const [signOutError, setSignOutError] = useState<string | null>(null);
+
+    useEffect(() => {
+        let cancelled = false;
+
+        async function load() {
+            try {
+                const res = await fetch("/api/me", { method: "GET" });
+
+                if (res.status === 401) {
+                    router.replace("/login");
+                    return;
+                }
+
+                if (!res.ok) {
+                    router.replace("/login");
+                    return;
+                }
+
+                const data = (await res.json()) as { user: PublicUser };
+                if (!cancelled) setUser(data.user);
+            } catch {
+                router.replace("/login");
+            } finally {
+                if (!cancelled) setIsLoadingUser(false);
+            }
+        }
+
+        load();
+        return () => {
+            cancelled = true;
+        };
+    }, [router]);
+
+    const displayUser = useMemo(() => {
+        if (user) return user;
+        return {
+            id: "",
+            full_name: "User",
+            email: "",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+        } satisfies PublicUser;
+    }, [user]);
+
+    async function onSignOut() {
+        setSignOutError(null);
+        try {
+            await fetch("/api/auth/logout", { method: "POST" });
+            router.push("/");
+            router.refresh();
+        } catch {
+            setSignOutError("Sign out failed");
+        }
+    }
+
+    if (isLoadingUser) {
+        return (
+            <div className="min-h-screen bg-white text-black dark:bg-black dark:text-white">
+                <div className="mx-auto max-w-6xl px-6 py-10 text-sm text-zinc-600 dark:text-zinc-400">
+                    Loading...
+                </div>
+            </div>
+        );
+    }
 
     return (
         <div className="min-h-screen bg-white text-black dark:bg-black dark:text-white">
@@ -51,8 +118,8 @@ export default function DashboardPage() {
                     </nav>
 
                     <div className="border-t border-zinc-200/70 px-6 py-4 text-xs text-zinc-600 dark:border-white/10 dark:text-zinc-400">
-                        Signed in as <span className="font-medium">{tmp_user.full_name}</span>
-                        <div className="mt-1">{tmp_user.email}</div>
+                        Signed in as <span className="font-medium">{displayUser.full_name}</span>
+                        <div className="mt-1">{displayUser.email}</div>
                     </div>
                 </aside>
 
@@ -60,7 +127,7 @@ export default function DashboardPage() {
                     <header className="sticky top-0 z-10 border-b border-zinc-200/70 bg-white/70 backdrop-blur dark:border-white/10 dark:bg-black/30">
                         <div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-4">
                             <div className="flex flex-1 items-center gap-2">
-                                <div className="relative flex-1 max-w-md">
+                                <div className="relative w-full max-w-md">
                                     <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
                                     <Input className="pl-9" placeholder="Search generations..." />
                                 </div>
@@ -76,14 +143,15 @@ export default function DashboardPage() {
                                 <DropdownMenuTrigger asChild>
                                     <Button variant="ghost" className="gap-3 px-2">
                                         <div className="flex h-9 w-9 items-center justify-center rounded-full border border-zinc-200/70 bg-white/70 text-xs font-semibold dark:border-white/10 dark:bg-white/5">
-                                            {initials(tmp_user.full_name)}
+                                            {initials(displayUser.full_name)}
                                         </div>
                                         <div className="hidden text-left md:block">
-                                            <div className="text-sm font-medium leading-none">{tmp_user.full_name}</div>
-                                            <div className="text-xs text-zinc-600 dark:text-zinc-400">{tmp_user.email}</div>
+                                            <div className="text-sm font-medium leading-none">{displayUser.full_name}</div>
+                                            <div className="text-xs text-zinc-600 dark:text-zinc-400">{displayUser.email}</div>
                                         </div>
                                     </Button>
                                 </DropdownMenuTrigger>
+
                                 <DropdownMenuContent align="end" className="w-56">
                                     <DropdownMenuLabel>Account</DropdownMenuLabel>
                                     <DropdownMenuSeparator />
@@ -91,8 +159,10 @@ export default function DashboardPage() {
                                         <Link href="/dashboard/settings">Settings</Link>
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
-                                    <DropdownMenuItem asChild>
-                                        <Link href="/">Sign out</Link>
+                                    <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
+                                        <button type="button" className="w-full text-left" onClick={onSignOut}>
+                                            Sign out
+                                        </button>
                                     </DropdownMenuItem>
                                 </DropdownMenuContent>
                             </DropdownMenu>
@@ -100,6 +170,12 @@ export default function DashboardPage() {
                     </header>
 
                     <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
+                        {signOutError ? (
+                            <div className="rounded-lg border border-zinc-200/70 bg-white/60 px-3 py-2 text-sm text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                                {signOutError}
+                            </div>
+                        ) : null}
+
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                             <div>
                                 <h1 className="text-2xl font-semibold tracking-tight">Overview</h1>

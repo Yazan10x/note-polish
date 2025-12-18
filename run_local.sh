@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DB_CONTAINER="notes-polish-mongo"
-DB_VOLUME="notes-polish-mongo-data"
+DB_CONTAINER="note-polish-mongo"
+DB_VOLUME="note-polish-mongo-data"
 HOST_PORT="${MONGO_PORT:-27077}"
 IMAGE="mongo:7"
 

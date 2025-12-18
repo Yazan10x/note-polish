@@ -6,7 +6,9 @@ import { UserAPI } from "@/server/api/UserAPI";
 const SESSION_COOKIE = "np_session";
 
 export async function GET() {
-  const token = cookies().get(SESSION_COOKIE)?.value;
+  const cookieStore = await cookies();
+  const token = cookieStore.get(SESSION_COOKIE)?.value;
+
   if (!token) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

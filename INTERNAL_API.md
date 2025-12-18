@@ -17,7 +17,10 @@ Errors:
 - 409 email already in use
 
 Sets cookie:
-- np_session (httpOnly)
+- np_session (httpOnly, sameSite=lax, secure in production, path=/, maxAge=30 days)
+
+Notes:
+- Signup also logs in by setting the session cookie.
 
 ### POST /api/auth/login
 Auth: Public  
@@ -33,7 +36,7 @@ Errors:
 - 401 invalid email or password
 
 Sets cookie:
-- np_session (httpOnly)
+- np_session (httpOnly, sameSite=lax, secure in production, path=/, maxAge=30 days)
 
 ### POST /api/auth/logout
 Auth: Requires cookie  
@@ -41,7 +44,7 @@ Response 200:
 - ok: true
 
 Clears cookie:
-- np_session
+- np_session (httpOnly, sameSite=lax, secure in production, path=/, maxAge=0)
 
 ## User
 
