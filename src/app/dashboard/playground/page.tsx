@@ -2,9 +2,9 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-import type { PublicStylePreset } from "@/lib/models/noteGeneration";
+import type { PublicNoteGeneration, PublicStylePreset } from "@/lib/models/noteGeneration";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -14,28 +14,36 @@ import { Label } from "@/components/ui/label";
 
 type StyleMode = "preset" | "custom";
 
-type CreateGenerationPayload = {
-    title?: string;
+type UpdatePendingPayload = {
     input_text?: string;
-    style: { mode: StyleMode; preset_id?: string; custom_prompt?: string };
+    style: { mode: "preset"; preset_id: string } | { mode: "custom"; custom_prompt: string };
 };
 
+const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024; // 5MB per file
+
 export default function PlaygroundPage() {
-    const [title, setTitle] = useState("");
+    const [title, setTitle] = useState(""); // optional UI only (not saved yet)
     const [inputText, setInputText] = useState("");
 
-    const [files, setFiles] = useState<File[]>([]);
+    const [pickedFiles, setPickedFiles] = useState<File[]>([]);
     const [styleMode, setStyleMode] = useState<StyleMode>("preset");
 
     const [presets, setPresets] = useState<PublicStylePreset[]>([]);
     const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
-
     const [customPrompt, setCustomPrompt] = useState("");
 
-    const [error, setError] = useState<string | null>(null);
-    const [isSubmitting, setIsSubmitting] = useState(false);
+    const [generation, setGeneration] = useState<PublicNoteGeneration | null>(null);
 
-    // Fallback presets so page works before API is wired
+    const [error, setError] = useState<string | null>(null);
+    const [notice, setNotice] = useState<string | null>(null);
+
+    const [isBootLoading, setIsBootLoading] = useState(true);
+    const [isSaving, setIsSaving] = useState(false);
+    const [isUploading, setIsUploading] = useState(false);
+
+    const saveTimerRef = useRef<number | null>(null);
+    const lastSavedSignatureRef = useRef<string>("");
+
     const fallbackPresets: PublicStylePreset[] = useMemo(
         () => [
             {
@@ -87,26 +95,31 @@ export default function PlaygroundPage() {
         []
     );
 
+    const selectedPreset = useMemo(() => {
+        if (!selectedPresetId) return null;
+        return presets.find((p) => p.id === selectedPresetId) ?? null;
+    }, [presets, selectedPresetId]);
+
+    // 1) Load presets
     useEffect(() => {
         let cancelled = false;
 
         async function loadPresets() {
             try {
-                // If you don’t have this endpoint yet, it will fall back automatically.
-                const res = await fetch("/api/style-presets", { method: "GET" });
+                const res = await fetch("/api/style-presets", { method: "GET", cache: "no-store" });
                 if (!res.ok) throw new Error("Failed");
-                const data = (await res.json()) as { presets: PublicStylePreset[] };
 
+                const data = (await res.json()) as { presets: PublicStylePreset[] };
                 if (cancelled) return;
 
-                const sorted = [...data.presets].sort((a, b) => a.sort_order - b.sort_order);
+                const sorted = [...(data.presets ?? [])].sort((a, b) => a.sort_order - b.sort_order);
+                if (!sorted.length) throw new Error("No presets");
+
                 setPresets(sorted);
-                setSelectedPresetId(sorted[0]?.id ?? null);
             } catch {
                 if (cancelled) return;
                 const sorted = [...fallbackPresets].sort((a, b) => a.sort_order - b.sort_order);
                 setPresets(sorted);
-                setSelectedPresetId(sorted[0]?.id ?? null);
             }
         }
 
@@ -116,76 +129,281 @@ export default function PlaygroundPage() {
         };
     }, [fallbackPresets]);
 
-    const selectedPreset = useMemo(() => {
-        if (!selectedPresetId) return null;
-        return presets.find((p) => p.id === selectedPresetId) ?? null;
-    }, [presets, selectedPresetId]);
+    // 2) Get or create pending generation
+    // NOTE: server route currently exports POST, not GET.
+    useEffect(() => {
+        let cancelled = false;
+
+        async function loadPending() {
+            setError(null);
+            setNotice(null);
+
+            try {
+                const res = await fetch("/api/generations/pending", { method: "POST", cache: "no-store" });
+                if (!res.ok) {
+                    const data = await res.json().catch(() => ({}));
+                    throw new Error(data?.error ?? "Failed to load pending generation");
+                }
+
+                const data = (await res.json()) as { generation?: PublicNoteGeneration } | PublicNoteGeneration;
+                const gen = "id" in (data as any) ? (data as PublicNoteGeneration) : (data as any).generation;
+
+                if (!gen || !gen.id) throw new Error("Invalid pending generation response");
+                if (cancelled) return;
+
+                setGeneration(gen);
+
+                // Hydrate UI state from server draft
+                setInputText(gen.input_text ?? "");
+
+                const mode = gen.style?.mode ?? "preset";
+                setStyleMode(mode);
+
+                if (mode === "preset") {
+                    setSelectedPresetId(gen.style?.preset_id ?? null);
+                    setCustomPrompt("");
+                } else {
+                    setSelectedPresetId(null);
+                    setCustomPrompt(gen.style?.custom_prompt ?? "");
+                }
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : "Failed to load pending generation";
+                if (!cancelled) setError(msg);
+            } finally {
+                if (!cancelled) setIsBootLoading(false);
+            }
+        }
+
+        loadPending();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    // If presets finish loading and we still don't have a selected preset id, pick first.
+    // This avoids "must pick preset" errors when the pending gen doesn't have preset_id yet.
+    useEffect(() => {
+        if (styleMode !== "preset") return;
+        if (selectedPresetId) return;
+        if (!presets.length) return;
+        setSelectedPresetId(presets[0]!.id);
+    }, [presets, selectedPresetId, styleMode]);
+
+    function clearSaveTimer() {
+        if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+        saveTimerRef.current = null;
+    }
+
+    useEffect(() => {
+        return () => {
+            clearSaveTimer();
+        };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
+    function buildUpdatePayload(): UpdatePendingPayload | null {
+        if (!generation?.id) return null;
+
+        if (styleMode === "preset") {
+            const pid = selectedPresetId?.trim();
+            if (!pid) return null;
+            return {
+                input_text: inputText.trim() ? inputText : undefined,
+                style: { mode: "preset", preset_id: pid },
+            };
+        }
+
+        const cp = customPrompt.trim();
+        if (!cp) return null;
+        return {
+            input_text: inputText.trim() ? inputText : undefined,
+            style: { mode: "custom", custom_prompt: cp },
+        };
+    }
+
+    async function patchPending(payload: UpdatePendingPayload): Promise<void> {
+        if (!generation?.id) throw new Error("No pending generation");
+
+        const res = await fetch(`/api/generations/${generation.id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            cache: "no-store",
+        });
+
+        if (!res.ok) {
+            const data = await res.json().catch(() => ({}));
+            throw new Error(data?.error ?? "Failed to update draft");
+        }
+
+        // Some routes return { ok: true }, some may return { generation }
+        const data = await res.json().catch(() => null);
+        const gen = data?.generation as PublicNoteGeneration | undefined;
+        if (gen?.id) setGeneration(gen);
+    }
+
+    function scheduleAutosave() {
+        clearSaveTimer();
+
+        const payload = buildUpdatePayload();
+        if (!payload) return;
+
+        const signature = JSON.stringify(payload);
+        if (signature === lastSavedSignatureRef.current) return;
+
+        saveTimerRef.current = window.setTimeout(async () => {
+            setError(null);
+            setNotice(null);
+            setIsSaving(true);
+
+            try {
+                await patchPending(payload);
+                lastSavedSignatureRef.current = signature;
+                setNotice("Draft saved");
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : "Failed to save draft";
+                setError(msg);
+            } finally {
+                setIsSaving(false);
+            }
+        }, 450);
+    }
+
+    // 3) Autosave on changes (pending-only editing)
+    useEffect(() => {
+        if (!generation?.id) return;
+        if (isBootLoading) return;
+        scheduleAutosave();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [inputText, styleMode, selectedPresetId, customPrompt, generation?.id, isBootLoading]);
 
     function onPickFiles(list: FileList | null) {
         if (!list) return;
-        setFiles(Array.from(list));
+
+        const arr = Array.from(list);
+        const tooBig = arr.find((f) => f.size > MAX_FILE_SIZE_BYTES);
+        if (tooBig) {
+            setError(`File too large: ${tooBig.name}. Max is 5MB per file for MVP.`);
+            return;
+        }
+
+        setError(null);
+        setNotice(null);
+        setPickedFiles(arr);
+    }
+
+    async function uploadPickedFiles(): Promise<void> {
+        if (!generation?.id) throw new Error("No pending generation");
+        if (!pickedFiles.length) return;
+
+        setError(null);
+        setNotice(null);
+        setIsUploading(true);
+
+        try {
+            const form = new FormData();
+            for (const f of pickedFiles) form.append("files", f);
+
+            const res = await fetch(`/api/generations/${generation.id}/files`, {
+                method: "POST",
+                body: form,
+                cache: "no-store",
+            });
+
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                throw new Error(data?.error ?? "Failed to upload files");
+            }
+
+            const data = (await res.json()) as { generation?: PublicNoteGeneration } | PublicNoteGeneration;
+            const gen = "id" in (data as any) ? (data as PublicNoteGeneration) : (data as any).generation;
+            if (gen?.id) setGeneration(gen);
+
+            setPickedFiles([]);
+            setNotice("Files uploaded");
+        } finally {
+            setIsUploading(false);
+        }
     }
 
     async function onGenerate() {
         setError(null);
+        setNotice(null);
+
+        if (!generation?.id) {
+            setError("Pending generation not ready yet");
+            return;
+        }
 
         if (styleMode === "preset" && !selectedPresetId) {
             setError("Pick a preset to continue.");
             return;
         }
 
-        // Basic guardrail: you can tighten later
-        if (!inputText.trim() && files.length === 0) {
+        if (styleMode === "custom" && !customPrompt.trim()) {
+            setError("Custom prompt is required for custom mode.");
+            return;
+        }
+
+        if (!inputText.trim() && (generation.input_files?.length ?? 0) === 0 && pickedFiles.length === 0) {
             setError("Add some text or upload at least one file.");
             return;
         }
 
-        const payload: CreateGenerationPayload = {
-            title: title.trim() ? title.trim() : undefined,
-            input_text: inputText.trim() ? inputText.trim() : undefined,
-            style:
-                styleMode === "preset"
-                    ? { mode: "preset", preset_id: selectedPresetId ?? undefined }
-                    : { mode: "custom", custom_prompt: customPrompt.trim() || undefined },
-        };
+        // Ensure latest draft is saved, then upload files if any.
+        const payload = buildUpdatePayload();
+        if (!payload) {
+            setError("Missing required fields");
+            return;
+        }
 
-        setIsSubmitting(true);
+        setIsSaving(true);
         try {
-            // Recommended pattern: multipart for files
-            const form = new FormData();
-            form.set("json", JSON.stringify(payload));
-            for (const f of files) form.append("files", f);
+            await patchPending(payload);
+            lastSavedSignatureRef.current = JSON.stringify(payload);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : "Failed to save draft";
+            setError(msg);
+            setIsSaving(false);
+            return;
+        } finally {
+            setIsSaving(false);
+        }
 
-            // You’ll implement this endpoint next.
-            // It should return the created generation id and initial status.
-            const res = await fetch("/api/note-generations", {
-                method: "POST",
-                body: form,
-            });
-
-            if (!res.ok) {
-                const data = await res.json().catch(() => ({}));
-                setError(data?.error ?? "Failed to start generation");
+        if (pickedFiles.length) {
+            try {
+                await uploadPickedFiles();
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : "Failed to upload files";
+                setError(msg);
                 return;
             }
-
-            const data = (await res.json()) as { id: string };
-            // Navigate to a details page later, or start polling here.
-            // For now, just show success by clearing files and leaving inputs.
-            setFiles([]);
-            setError(null);
-
-            // eslint-disable-next-line no-console
-            console.log("Started generation:", data.id);
-        } catch {
-            setError("Failed to start generation");
-        } finally {
-            setIsSubmitting(false);
         }
+
+        // Submission and polling come next (not implemented yet)
+        setNotice("Draft is ready. Next step is Submit and polling.");
+        // eslint-disable-next-line no-console
+        console.log("Draft ready:", generation.id);
+    }
+
+    const inputsSummary = useMemo(() => {
+        const already = generation?.input_files?.length ?? 0;
+        const picked = pickedFiles.length;
+        const t = inputText.trim() ? "Text included" : "No text";
+        const filesLabel = already + picked > 0 ? `${already} uploaded, ${picked} picked` : "No files";
+        return `${filesLabel} · ${t}`;
+    }, [generation?.input_files?.length, pickedFiles.length, inputText]);
+
+    if (isBootLoading) {
+        return (
+            <div className="mx-auto max-w-6xl px-6 py-10 text-sm text-zinc-600 dark:text-zinc-400">
+                Loading playground...
+            </div>
+        );
     }
 
     return (
-        <div className="mx-auto max-w-6xl space-y-6 px-6 py-8">
+        <div className="space-y-6">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
                 <div>
                     <h1 className="text-2xl font-semibold tracking-tight">Playground</h1>
@@ -194,9 +412,19 @@ export default function PlaygroundPage() {
                     </p>
                 </div>
 
-                <Button onClick={onGenerate} disabled={isSubmitting}>
-                    {isSubmitting ? "Generating..." : "Generate image"}
-                </Button>
+                <div className="flex gap-3">
+                    <Button
+                        variant="outline"
+                        onClick={uploadPickedFiles}
+                        disabled={!pickedFiles.length || isUploading || !generation?.id}
+                    >
+                        {isUploading ? "Uploading..." : "Upload files"}
+                    </Button>
+
+                    <Button onClick={onGenerate} disabled={isSaving || isUploading || !generation?.id}>
+                        {isSaving || isUploading ? "Saving..." : "Generate image"}
+                    </Button>
+                </div>
             </div>
 
             {error ? (
@@ -205,8 +433,13 @@ export default function PlaygroundPage() {
                 </div>
             ) : null}
 
+            {notice ? (
+                <div className="rounded-lg border border-zinc-200/70 bg-white/60 px-3 py-2 text-sm text-zinc-700 dark:border-white/10 dark:bg-white/5 dark:text-zinc-300">
+                    {notice}
+                </div>
+            ) : null}
+
             <div className="grid gap-4 lg:grid-cols-3">
-                {/* Left: Controls */}
                 <Card className="lg:col-span-1 border-zinc-200/70 bg-white/70 backdrop-blur dark:border-white/10 dark:bg-white/5">
                     <CardHeader>
                         <CardTitle className="text-base">Setup</CardTitle>
@@ -219,7 +452,7 @@ export default function PlaygroundPage() {
                                 id="title"
                                 value={title}
                                 onChange={(e) => setTitle(e.target.value)}
-                                placeholder="Optional name for this generation"
+                                placeholder="Optional name"
                             />
                         </div>
 
@@ -232,9 +465,9 @@ export default function PlaygroundPage() {
                                 accept="image/*,application/pdf"
                                 onChange={(e) => onPickFiles(e.target.files)}
                             />
-                            {files.length ? (
+                            {pickedFiles.length ? (
                                 <div className="text-xs text-zinc-600 dark:text-zinc-400">
-                                    {files.length} file(s) selected
+                                    {pickedFiles.length} file(s) picked (not uploaded yet)
                                 </div>
                             ) : (
                                 <div className="text-xs text-zinc-600 dark:text-zinc-400">
@@ -243,11 +476,7 @@ export default function PlaygroundPage() {
                             )}
                         </div>
 
-                        <Tabs
-                            value={styleMode}
-                            onValueChange={(v) => setStyleMode(v as StyleMode)}
-                            className="w-full"
-                        >
+                        <Tabs value={styleMode} onValueChange={(v) => setStyleMode(v as StyleMode)} className="w-full">
                             <TabsList className="w-full">
                                 <TabsTrigger className="flex-1" value="preset">
                                     Preset
@@ -274,9 +503,7 @@ export default function PlaygroundPage() {
                                                 ].join(" ")}
                                             >
                                                 <div className="font-medium">{p.title}</div>
-                                                <div className="text-xs text-zinc-600 dark:text-zinc-400">
-                                                    {p.key}
-                                                </div>
+                                                <div className="text-xs text-zinc-600 dark:text-zinc-400">{p.key}</div>
                                             </button>
                                         );
                                     })}
@@ -293,7 +520,7 @@ export default function PlaygroundPage() {
                                     className="min-h-28"
                                 />
                                 <div className="text-xs text-zinc-600 dark:text-zinc-400">
-                                    This is shown to the user later, but your internal snapshot_prompt stays private.
+                                    Custom prompt is public safe. snapshot_prompt stays private in DB.
                                 </div>
                             </TabsContent>
                         </Tabs>
@@ -308,10 +535,13 @@ export default function PlaygroundPage() {
                                 className="min-h-40"
                             />
                         </div>
+
+                        <div className="text-xs text-zinc-600 dark:text-zinc-400">
+                            Draft autosaves while status is pending. {isSaving ? "Saving..." : null}
+                        </div>
                     </CardContent>
                 </Card>
 
-                {/* Right: Preview */}
                 <Card className="lg:col-span-2 border-zinc-200/70 bg-white/70 backdrop-blur dark:border-white/10 dark:bg-white/5">
                     <CardHeader>
                         <CardTitle className="text-base">Preview</CardTitle>
@@ -321,9 +551,7 @@ export default function PlaygroundPage() {
                         <div className="rounded-lg border border-zinc-200/70 bg-white/60 p-4 dark:border-white/10 dark:bg-white/5">
                             <div className="text-sm font-medium">Selected style</div>
                             <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                                {styleMode === "preset"
-                                    ? selectedPreset?.title ?? "Pick a preset"
-                                    : "Custom prompt"}
+                                {styleMode === "preset" ? selectedPreset?.title ?? "Pick a preset" : "Custom prompt"}
                             </div>
                         </div>
 
@@ -340,19 +568,28 @@ export default function PlaygroundPage() {
                                     />
                                 </div>
                             </div>
+                        ) : generation?.preview_images?.length ? (
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                {generation.preview_images.slice(0, 4).map((src, idx) => (
+                                    <div
+                                        key={`${idx}-${src.slice(0, 20)}`}
+                                        className="overflow-hidden rounded-xl border border-zinc-200/70 bg-white/60 dark:border-white/10 dark:bg-white/5"
+                                    >
+                                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                                        <img src={src} alt={`Preview ${idx + 1}`} className="h-full w-full object-cover" />
+                                    </div>
+                                ))}
+                            </div>
                         ) : (
                             <div className="rounded-xl border border-dashed border-zinc-300 bg-white/40 p-8 text-sm text-zinc-600 dark:border-white/15 dark:bg-white/5 dark:text-zinc-400">
-                                When you generate, preview images from OpenAI can show up here.
+                                When you submit later, preview_images from OpenAI can show up here.
                             </div>
                         )}
 
                         <div className="grid gap-3 sm:grid-cols-2">
                             <div className="rounded-lg border border-zinc-200/70 bg-white/60 p-4 text-sm dark:border-white/10 dark:bg-white/5">
                                 <div className="font-medium">Inputs</div>
-                                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">
-                                    {files.length ? `${files.length} file(s)` : "No files"} ·{" "}
-                                    {inputText.trim() ? "Text included" : "No text"}
-                                </div>
+                                <div className="mt-1 text-xs text-zinc-600 dark:text-zinc-400">{inputsSummary}</div>
                             </div>
                             <div className="rounded-lg border border-zinc-200/70 bg-white/60 p-4 text-sm dark:border-white/10 dark:bg-white/5">
                                 <div className="font-medium">Output</div>
@@ -361,6 +598,10 @@ export default function PlaygroundPage() {
                                 </div>
                             </div>
                         </div>
+
+                        {generation?.id ? (
+                            <div className="text-xs text-zinc-600 dark:text-zinc-400">Draft id: {generation.id}</div>
+                        ) : null}
                     </CardContent>
                 </Card>
             </div>
