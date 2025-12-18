@@ -380,6 +380,8 @@ export default function PlaygroundPage() {
         );
     }
 
+    const gridClass = "grid gap-3 grid-cols-2 sm:grid-cols-3 lg:grid-cols-6";
+
     return (
         <div className="space-y-6">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
@@ -463,48 +465,11 @@ export default function PlaygroundPage() {
 
                         <div className="space-y-3">
                             <div className="text-xs text-zinc-600 dark:text-zinc-400">
-                                Pick a preset, or use Custom.
+                                Pick a style preset, or use Custom.
                             </div>
 
-                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                                {/* Custom box (same size as presets) */}
-                                <button
-                                    type="button"
-                                    onClick={() => {
-                                        setStyleMode("custom");
-                                        setSelectedPresetId(null);
-                                    }}
-                                    aria-pressed={styleMode === "custom"}
-                                    className={[
-                                        "group rounded-xl border p-2 text-left transition",
-                                        "shadow-sm hover:shadow-lg active:shadow-md",
-                                        styleMode === "custom"
-                                            ? "border-zinc-900 bg-zinc-50 shadow-lg dark:border-white dark:bg-white/10"
-                                            : "border-zinc-200/70 bg-white/60 hover:bg-zinc-100/70 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
-                                    ].join(" ")}
-                                >
-                                    <div className="mx-auto overflow-hidden rounded-lg border border-zinc-200/70 bg-white/60 dark:border-white/10 dark:bg-white/5">
-                                        <div className="relative flex h-[256px] w-[256px] max-w-full items-center justify-center">
-                                            <div className="flex flex-col items-center gap-3 px-6 text-center">
-                                                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-zinc-200/70 bg-white/70 dark:border-white/10 dark:bg-white/5">
-                                                    <Plus className="h-6 w-6 text-zinc-900 dark:text-zinc-100" />
-                                                </div>
-                                                <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                                                    Custom
-                                                </div>
-                                                <div className="text-[11px] text-zinc-600 dark:text-zinc-400">
-                                                    Write your own prompt
-                                                </div>
-                                            </div>
-
-                                            {styleMode === "custom" ? (
-                                                <div className="pointer-events-none absolute inset-0 ring-2 ring-zinc-900 dark:ring-white" />
-                                            ) : null}
-                                        </div>
-                                    </div>
-                                </button>
-
-                                {/* Preset boxes */}
+                            <div className={gridClass}>
+                                {/* Presets first */}
                                 {presets.map((p) => {
                                     const active = styleMode === "preset" && p.id === selectedPresetId;
 
@@ -518,55 +483,87 @@ export default function PlaygroundPage() {
                                             }}
                                             aria-pressed={active}
                                             className={[
-                                                "group rounded-xl border p-2 text-left transition",
+                                                "group relative w-full overflow-hidden rounded-xl border text-left transition",
                                                 "shadow-sm hover:shadow-lg active:shadow-md",
                                                 active
                                                     ? "border-zinc-900 bg-zinc-50 shadow-lg dark:border-white dark:bg-white/10"
                                                     : "border-zinc-200/70 bg-white/60 hover:bg-zinc-100/70 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
                                             ].join(" ")}
                                         >
-                                            <div className="mx-auto overflow-hidden rounded-lg border border-zinc-200/70 bg-white/60 dark:border-white/10 dark:bg-white/5">
-                                                <div className="relative h-[256px] w-[256px] max-w-full">
-                                                    {p.image_url ? (
-                                                        <>
-                                                            <Image
-                                                                src={p.image_url}
-                                                                alt={p.title}
-                                                                fill
-                                                                className="object-cover"
-                                                                sizes="256px"
-                                                                priority={false}
-                                                            />
-                                                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-3 pb-3 pt-8 backdrop-blur-[1px]">
-                                                                <div className="text-sm font-semibold text-white leading-snug drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]">
-                                                                    {p.title}
-                                                                </div>
-                                                                <div className="mt-0.5 text-[11px] text-white/90 drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]">
-                                                                    {p.key}
-                                                                </div>
-                                                            </div>
-                                                        </>
-                                                    ) : (
-                                                        <div className="flex h-full w-full items-end bg-zinc-100 dark:bg-white/5">
-                                                            <div className="w-full p-3">
-                                                                <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
-                                                                    {p.title}
-                                                                </div>
-                                                                <div className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-400">
-                                                                    {p.key}
-                                                                </div>
+                                            <div className="relative aspect-square w-full">
+                                                {p.image_url ? (
+                                                    <>
+                                                        <Image
+                                                            src={p.image_url}
+                                                            alt={p.title}
+                                                            fill
+                                                            className="object-cover"
+                                                            sizes="(min-width: 1024px) 16vw, (min-width: 640px) 33vw, 50vw"
+                                                            priority={false}
+                                                        />
+                                                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-3 pb-3 pt-10 backdrop-blur-[1px]">
+                                                            <div className="text-sm font-semibold text-white leading-snug drop-shadow-[0_1px_1px_rgba(0,0,0,0.8)]">
+                                                                {p.title}
                                                             </div>
                                                         </div>
-                                                    )}
+                                                    </>
+                                                ) : (
+                                                    <div className="flex h-full w-full items-end bg-zinc-100 dark:bg-white/5">
+                                                        <div className="w-full p-3">
+                                                            <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                                                                {p.title}
+                                                            </div>
+                                                            <div className="mt-0.5 text-[11px] text-zinc-600 dark:text-zinc-400">
+                                                                {p.key}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                )}
 
-                                                    {active ? (
-                                                        <div className="pointer-events-none absolute inset-0 ring-2 ring-zinc-900 dark:ring-white" />
-                                                    ) : null}
-                                                </div>
+                                                {active ? (
+                                                    <div className="pointer-events-none absolute inset-0 ring-2 ring-zinc-900 dark:ring-white" />
+                                                ) : null}
                                             </div>
                                         </button>
                                     );
                                 })}
+
+                                {/* Custom last */}
+                                <button
+                                    type="button"
+                                    onClick={() => {
+                                        setStyleMode("custom");
+                                        setSelectedPresetId(null);
+                                    }}
+                                    aria-pressed={styleMode === "custom"}
+                                    className={[
+                                        "group relative w-full overflow-hidden rounded-xl border text-left transition",
+                                        "shadow-sm hover:shadow-lg active:shadow-md",
+                                        styleMode === "custom"
+                                            ? "border-zinc-900 bg-zinc-50 shadow-lg dark:border-white dark:bg-white/10"
+                                            : "border-zinc-200/70 bg-white/60 hover:bg-zinc-100/70 dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10",
+                                    ].join(" ")}
+                                >
+                                    <div className="relative aspect-square w-full">
+                                        <div className="flex h-full w-full items-center justify-center">
+                                            <div className="flex flex-col items-center gap-3 px-6 text-center">
+                                                <div className="flex h-12 w-12 items-center justify-center rounded-full border border-zinc-200/70 bg-white/70 dark:border-white/10 dark:bg-white/5">
+                                                    <Plus className="h-6 w-6 text-zinc-900 dark:text-zinc-100" />
+                                                </div>
+                                                <div className="text-sm font-semibold text-zinc-900 dark:text-zinc-100">
+                                                    Custom
+                                                </div>
+                                                <div className="text-[11px] text-zinc-600 dark:text-zinc-400">
+                                                    Write your own prompt
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {styleMode === "custom" ? (
+                                            <div className="pointer-events-none absolute inset-0 ring-2 ring-zinc-900 dark:ring-white" />
+                                        ) : null}
+                                    </div>
+                                </button>
                             </div>
 
                             {styleMode === "custom" ? (
@@ -598,7 +595,8 @@ export default function PlaygroundPage() {
                         </div>
 
                         <div className="text-xs text-zinc-600 dark:text-zinc-400">
-                            Draft autosaves while status is pending. {isSaving ? "Saving..." : didUpdateFlash ? "Updated" : null}
+                            Draft autosaves while status is pending.{" "}
+                            {isSaving ? "Saving..." : didUpdateFlash ? "Updated" : null}
                         </div>
 
                         {generation?.id ? (

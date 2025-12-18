@@ -7,6 +7,7 @@ import {
     S3Client,
     PutObjectCommand,
     GetObjectCommand,
+    DeleteObjectCommand,
 } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
@@ -30,7 +31,8 @@ declare global {
 }
 
 const cache: GlobalCache =
-    globalThis.__notePolishFileManager ?? (globalThis.__notePolishFileManager = {});
+    globalThis.__notePolishFileManager ??
+    (globalThis.__notePolishFileManager = {});
 
 function reqEnv(name: string): string {
     const v = process.env[name]?.trim();
@@ -40,12 +42,16 @@ function reqEnv(name: string): string {
 
 type Uploadable = Buffer | Blob;
 
-async function toBuffer(file: Uploadable): Promise<{ buf: Buffer; contentType: string }> {
+async function toBuffer(
+    file: Uploadable
+): Promise<{ buf: Buffer; contentType: string }> {
     if (Buffer.isBuffer(file)) {
         return { buf: file, contentType: "application/octet-stream" };
     }
+
     const ab = await file.arrayBuffer();
     const buf = Buffer.from(ab);
+
     const contentType =
         typeof (file as any).type === "string" && (file as any).type.trim()
             ? (file as any).type.trim()
@@ -110,8 +116,12 @@ export class FileManager {
 
     /**
      * Uploads a file and returns the stored key.
-     * - S3: returns S3 object key
-     * - GridFS: returns GridFS file id as string
+     * S3: returns S3 object key
+     * GridFS: returns GridFS file id as string
+     *
+     * Note: key is treated as:
+     * S3: object key
+     * GridFS: only used as the file id if it is a valid ObjectId string
      */
     static async _upload(file: Uploadable, key?: string): Promise<string> {
         const s3 = this.getS3OrFalse();
@@ -131,12 +141,17 @@ export class FileManager {
         }
 
         const bucket = await this.getGridFsBucket();
-        const id = key && ObjectId.isValid(key) ? new ObjectId(key) : new ObjectId();
+        const id =
+            key && ObjectId.isValid(key) ? new ObjectId(key) : new ObjectId();
 
         await new Promise<void>((resolve, reject) => {
-            const uploadStream = bucket.openUploadStreamWithId(id, id.toString(), {
-                metadata: { contentType },
-            });
+            const uploadStream = bucket.openUploadStreamWithId(
+                id,
+                id.toString(),
+                {
+                    metadata: { contentType },
+                }
+            );
 
             Readable.from(buf)
                 .pipe(uploadStream)
@@ -148,9 +163,37 @@ export class FileManager {
     }
 
     /**
+     * Deletes a stored file.
+     * S3: deletes object key
+     * GridFS: deletes file by ObjectId string
+     */
+    static async _delete(key: string): Promise<void> {
+        const s3 = this.getS3OrFalse();
+
+        if (s3) {
+            await s3.client.send(
+                new DeleteObjectCommand({
+                    Bucket: s3.cfg.bucket,
+                    Key: key,
+                })
+            );
+            return;
+        }
+
+        // If it's not a valid ObjectId, it cannot exist in GridFS under our scheme.
+        if (!ObjectId.isValid(key)) return;
+
+        const bucket = await this.getGridFsBucket();
+        // GridFS delete throws if missing; treat missing as already deleted.
+        await bucket.delete(new ObjectId(key)).catch(() => {});
+    }
+
+    /**
      * Downloads file bytes and content type (useful for internal serving routes).
      */
-    static async _download_bytes(key: string): Promise<{ buf: Buffer; contentType: string }> {
+    static async _download_bytes(
+        key: string
+    ): Promise<{ buf: Buffer; contentType: string }> {
         const s3 = this.getS3OrFalse();
 
         if (s3) {
@@ -164,28 +207,38 @@ export class FileManager {
             if (!res.Body) throw new Error("S3 returned empty body");
 
             const buf = await streamToBuffer(res.Body);
-            const contentType = (res.ContentType?.trim() || "application/octet-stream") as string;
+            const contentType =
+                (res.ContentType?.trim() ||
+                    "application/octet-stream") as string;
+
             return { buf, contentType };
         }
 
         if (!ObjectId.isValid(key)) throw new Error("Invalid GridFS file id");
 
         const bucket = await this.getGridFsBucket();
-        const fileDoc = await bucket.find({ _id: new ObjectId(key) }).limit(1).next();
+        const fileDoc = await bucket
+            .find({ _id: new ObjectId(key) })
+            .limit(1)
+            .next();
+
         if (!fileDoc) throw new Error("File not found");
 
         const buf = await new Promise<Buffer>((resolve, reject) => {
             const chunks: Buffer[] = [];
             bucket
                 .openDownloadStream(new ObjectId(key))
-                .on("data", (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)))
+                .on("data", (c) =>
+                    chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c))
+                )
                 .on("error", reject)
                 .on("end", () => resolve(Buffer.concat(chunks)));
         });
 
+        // We store it under metadata.contentType in _upload
         const contentType =
-            (typeof (fileDoc as any).contentType === "string" && (fileDoc as any).contentType) ||
-            (fileDoc.metadata?.contentType as string | undefined) ||
+            (typeof fileDoc.metadata?.contentType === "string" &&
+                fileDoc.metadata.contentType.trim()) ||
             "application/octet-stream";
 
         return { buf, contentType };
@@ -201,8 +254,8 @@ export class FileManager {
 
     /**
      * Returns a URL for the client to download.
-     * - S3: presigned GET url
-     * - GridFS: internal route you must implement, recommended: /files/:key
+     * S3: presigned GET url (client downloads from S3 directly)
+     * GridFS: internal route you must implement, recommended: /files/:key
      */
     static async _get_presigned_url(key: string): Promise<string> {
         const s3 = this.getS3OrFalse();
@@ -216,5 +269,22 @@ export class FileManager {
         }
 
         return `/files/${key}`;
+    }
+
+    // Optional convenience aliases (keep old names working)
+    static upload(file: Uploadable, key?: string) {
+        return this._upload(file, key);
+    }
+    static delete(key: string) {
+        return this._delete(key);
+    }
+    static downloadBytes(key: string) {
+        return this._download_bytes(key);
+    }
+    static downloadBase64(key: string) {
+        return this._download(key);
+    }
+    static getPresignedUrl(key: string) {
+        return this._get_presigned_url(key);
     }
 }

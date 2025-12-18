@@ -37,7 +37,6 @@ const PAGE_SIZE = 12;
 
 const STATUS_OPTIONS = [
     { key: "all", label: "All statuses" },
-    { key: "queued", label: "Queued" },
     { key: "processing", label: "Processing" },
     { key: "succeeded", label: "Succeeded" },
     { key: "failed", label: "Failed" },
@@ -58,10 +57,7 @@ export default function HistoryPage() {
 
     const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
 
-    const selectedCount = useMemo(
-        () => Object.values(selectedIds).filter(Boolean).length,
-        [selectedIds]
-    );
+    const selectedCount = useMemo(() => Object.values(selectedIds).filter(Boolean).length, [selectedIds]);
 
     const allSelectedOnPage = useMemo(() => {
         if (!items.length) return false;
@@ -211,9 +207,7 @@ export default function HistoryPage() {
                             </DropdownMenu>
                         </div>
 
-                        <div className="text-sm text-zinc-600 dark:text-zinc-400">
-                            {selectedCount} selected
-                        </div>
+                        <div className="text-sm text-zinc-600 dark:text-zinc-400">{selectedCount} selected</div>
                     </div>
                 </CardHeader>
 
@@ -263,13 +257,11 @@ export default function HistoryPage() {
                                     items.map((g) => {
                                         const title = (g as any).title || "Untitled";
                                         const createdAt =
-                                            (g as any).created_at ||
-                                            (g as any).createdAt ||
-                                            (g as any).created;
+                                            (g as any).created_at || (g as any).createdAt || (g as any).created;
+
                                         const statusLabel =
-                                            String((g as any).status || "unknown")
-                                                .replaceAll("_", " ")
-                                                .trim() || "unknown";
+                                            String((g as any).status || "unknown").replaceAll("_", " ").trim() ||
+                                            "unknown";
 
                                         const styleLabel = formatStyle(g);
 
@@ -279,9 +271,20 @@ export default function HistoryPage() {
                                             (g as any).image_url ||
                                             null;
 
+                                        const href = `/dashboard/history/${encodeURIComponent(g.id)}`;
+
                                         return (
-                                            <TableRow key={g.id}>
-                                                <TableCell>
+                                            <TableRow
+                                                key={g.id}
+                                                className="cursor-pointer hover:bg-zinc-50/70 dark:hover:bg-white/5"
+                                                onClick={() => router.push(href)}
+                                                onKeyDown={(e) => {
+                                                    if (e.key === "Enter" || e.key === " ") router.push(href);
+                                                }}
+                                                tabIndex={0}
+                                                role="button"
+                                            >
+                                                <TableCell onClick={(e) => e.stopPropagation()}>
                                                     <Checkbox
                                                         checked={Boolean(selectedIds[g.id])}
                                                         onCheckedChange={(v) => toggleOne(g.id, Boolean(v))}
@@ -293,21 +296,14 @@ export default function HistoryPage() {
                                                     <div className="flex items-center gap-3">
                                                         <div className="relative h-10 w-10 overflow-hidden rounded-md border border-zinc-200/70 bg-white dark:border-white/10 dark:bg-white/5">
                                                             {previewUrl ? (
-                                                                <Image
-                                                                    src={previewUrl}
-                                                                    alt=""
-                                                                    fill
-                                                                    className="object-cover"
-                                                                />
+                                                                <Image src={previewUrl} alt="" fill className="object-cover" />
                                                             ) : (
                                                                 <div className="h-full w-full" />
                                                             )}
                                                         </div>
 
                                                         <div className="min-w-0">
-                                                            <div className="truncate text-sm font-medium">
-                                                                {title}
-                                                            </div>
+                                                            <div className="truncate text-sm font-medium">{title}</div>
                                                             <div className="truncate text-xs text-zinc-600 dark:text-zinc-400">
                                                                 {g.id}
                                                             </div>
@@ -331,18 +327,28 @@ export default function HistoryPage() {
                                                     <StatusPill value={statusLabel} />
                                                 </TableCell>
 
-                                                <TableCell className="text-right">
+                                                <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                                                     <DropdownMenu>
                                                         <DropdownMenuTrigger asChild>
-                                                            <Button variant="ghost" size="icon" aria-label="Open menu">
+                                                            <Button
+                                                                variant="ghost"
+                                                                size="icon"
+                                                                aria-label="Open menu"
+                                                                onClick={(e) => e.stopPropagation()}
+                                                            >
                                                                 <MoreHorizontal className="h-4 w-4" />
                                                             </Button>
                                                         </DropdownMenuTrigger>
-                                                        <DropdownMenuContent align="end" className="w-44">
+
+                                                        <DropdownMenuContent
+                                                            align="end"
+                                                            className="w-44"
+                                                            onClick={(e) => e.stopPropagation()}
+                                                        >
                                                             <DropdownMenuLabel>Actions</DropdownMenuLabel>
                                                             <DropdownMenuSeparator />
-                                                            <DropdownMenuItem asChild>
-                                                                <Link href={`/dashboard/history/${encodeURIComponent(g.id)}`}>{title}</Link>
+                                                            <DropdownMenuItem onSelect={() => router.push(href)}>
+                                                                Open
                                                             </DropdownMenuItem>
                                                             <DropdownMenuItem
                                                                 onSelect={(e) => {
@@ -427,18 +433,25 @@ function formatDate(v: string | Date) {
     });
 }
 
+/**
+ * Show the preset title, not the preset id.
+ * Uses snapshot_title stored on the generation (best), falls back gracefully.
+ */
 function formatStyle(g: PublicNoteGeneration) {
     const style = (g as any).style;
-    if (style?.mode === "custom") return "Custom";
-    if (style?.mode === "preset") {
-        const preset = style?.preset_id || style?.presetId || "Preset";
-        return `Preset: ${preset}`;
+
+    if (style?.mode === "custom") {
+        return style?.snapshot_title || "Custom";
     }
 
-    const presetId = (g as any).preset_id || (g as any).presetId;
-    const customPrompt = (g as any).custom_prompt || (g as any).customPrompt;
-    if (customPrompt) return "Custom";
-    if (presetId) return `Preset: ${presetId}`;
+    if (style?.mode === "preset") {
+        // snapshot_title should be the preset title at time of generation
+        return style?.snapshot_title || "Preset";
+    }
+
+    // fallback for older docs
+    const legacySnapshot = (g as any)?.snapshot_title;
+    if (legacySnapshot) return String(legacySnapshot);
 
     return "Preset";
 }
@@ -453,7 +466,7 @@ function StatusPill({ value }: { value: string }) {
                 ? "bg-red-500/10 text-red-700 dark:text-red-300"
                 : v.includes("process") || v.includes("run")
                     ? "bg-blue-500/10 text-blue-700 dark:text-blue-300"
-                    : v.includes("queue") || v.includes("pending")
+                    : v.includes("pending")
                         ? "bg-zinc-500/10 text-zinc-700 dark:text-zinc-300"
                         : "bg-zinc-500/10 text-zinc-700 dark:text-zinc-300";
 
