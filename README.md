@@ -3,7 +3,12 @@
 Note Polish turns messy notes into a clean, one page study sheet you can actually review.
 Upload a screenshot or paste text, pick a style, and generate a print ready summary in seconds.
 
+This image shows before and after of the heart note
 <img width="1147" height="900" alt="image" src="https://github.com/user-attachments/assets/a5659497-e5ee-4df1-928d-27571f45557e" />
+
+
+This images shows how you can select from 1 to 5 option to cuztomize theo ut put
+<img width="1400" height="860" alt="dashboard" src="https://github.com/user-attachments/assets/a299242f-a1f4-4d66-87f1-afa7a3d89796" />
 
 
 ## Tech Stack
