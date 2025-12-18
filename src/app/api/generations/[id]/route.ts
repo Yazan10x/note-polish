@@ -28,9 +28,7 @@ function iso(d: Date): string {
 }
 
 async function toPublic(doc: NoteGenerationDb): Promise<PublicNoteGeneration> {
-    const input_files = await Promise.all(
-        (doc.input_files ?? []).map((k) => FileManager._get_presigned_url(k))
-    );
+    const input_files = await Promise.all((doc.input_files ?? []).map((k) => FileManager._get_presigned_url(k)));
 
     const output_files = doc.output_files?.length
         ? await Promise.all(doc.output_files.map((k) => FileManager._get_presigned_url(k)))
@@ -65,6 +63,7 @@ async function toPublic(doc: NoteGenerationDb): Promise<PublicNoteGeneration> {
 
 const PatchSchema = z
     .object({
+        title: z.string().optional(),
         input_text: z.string().optional(),
         style: z
             .union([
@@ -79,7 +78,7 @@ const PatchSchema = z
             ])
             .optional(),
     })
-    .refine((v) => typeof v.input_text === "string" || typeof v.style === "object", {
+    .refine((v) => typeof v.title === "string" || typeof v.input_text === "string" || typeof v.style === "object", {
         message: "Nothing to update",
     });
 
@@ -125,9 +124,13 @@ export async function PATCH(
 
         const patch = parsed.data;
 
-        const $set: Partial<NoteGenerationDb> & { updated_at: Date } = {
+        const $set: (Partial<NoteGenerationDb> & { updated_at: Date } & { title?: string }) = {
             updated_at: new Date(),
         };
+
+        if (typeof patch.title === "string") {
+            $set.title = patch.title.trim();
+        }
 
         if (typeof patch.input_text === "string") {
             $set.input_text = patch.input_text;

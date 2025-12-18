@@ -24,6 +24,8 @@ export type PublicStylePreset = z.infer<typeof PublicStylePresetSchema>;
 export const PublicNoteGenerationSchema = z.object({
     id: z.string().min(1),
 
+    title: z.string().optional(),
+
     status: z.enum(["pending", "processing", "processed", "failed"]),
     error: z.string().optional(),
 

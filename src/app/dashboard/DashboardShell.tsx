@@ -73,13 +73,13 @@ export default function DashboardShell({
                         >
                             History
                         </NavItem>
-                        <NavItem
-                            active={isActive(pathname, "/dashboard/settings")}
-                            href="/dashboard/settings"
-                            icon={<Settings className="h-4 w-4" />}
-                        >
-                            Settings
-                        </NavItem>
+                        {/*<NavItem*/}
+                        {/*    active={isActive(pathname, "/dashboard/settings")}*/}
+                        {/*    href="/dashboard/settings"*/}
+                        {/*    icon={<Settings className="h-4 w-4" />}*/}
+                        {/*>*/}
+                        {/*    Settings*/}
+                        {/*</NavItem>*/}
                     </nav>
 
                     <div className="border-t border-zinc-200/70 px-6 py-4 text-xs text-zinc-600 dark:border-white/10 dark:text-zinc-400">

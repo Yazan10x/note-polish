@@ -107,7 +107,7 @@ export class NoteGenerationAPI {
               projection: {
                 _id: 1,
                 status: 1,
-                input_text: 1,
+                title: 1,
                 created_at: 1,
                 style: 1,
               },
@@ -143,7 +143,7 @@ export class NoteGenerationAPI {
 
       return {
         id: d._id.toString(),
-        title: deriveGenerationTitle(d),
+        title: (d.title?.trim() || deriveGenerationTitle(d) || "Untitled"),
         style_label,
         status: d.status,
         created_at: iso(d.created_at),
@@ -256,6 +256,8 @@ export class NoteGenerationAPI {
 
     return {
       id: doc._id.toString(),
+
+      title: doc.title,
 
       status: doc.status,
       error: doc.error,

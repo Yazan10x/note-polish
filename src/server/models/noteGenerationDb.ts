@@ -23,6 +23,8 @@ export type NoteGenerationDb = {
     _id: ObjectId;
     user_id: ObjectId;
 
+    title?: string;
+
     status: NoteGenerationStatus;
     error?: string;
 
