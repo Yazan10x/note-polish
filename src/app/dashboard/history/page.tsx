@@ -7,7 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { MoreHorizontal, RefreshCw } from "lucide-react";
 
-import type { PublicNoteGeneration } from "@/lib/models/noteGeneration";
+import type { PublicNoteGeneration, PublicStylePreset } from "@/lib/models/noteGeneration";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -33,9 +33,30 @@ type ListResponse =
     | { items: PublicNoteGeneration[]; total: number }
     | PublicNoteGeneration[];
 
+type StatusFilter = "all" | "queued" | "processing" | "processed" | "failed";
+
+type PresetsResponse = { presets: PublicStylePreset[] };
+
+type GenerationWithOptionalThumbs = PublicNoteGeneration & {
+    // If you add these later, History can auto-prefer them.
+    output_image_url?: string | null;
+    preview_image_url?: string | null;
+    image_url?: string | null;
+};
+
+type RowVM = {
+    id: string;
+    href: string;
+    title: string;
+    createdAt: string | Date | null;
+    statusLabel: string;
+    styleLabel: string;
+    thumbUrl: string | null;
+};
+
 const PAGE_SIZE = 12;
 
-const STATUS_OPTIONS = [
+const STATUS_OPTIONS: ReadonlyArray<{ key: StatusFilter; label: string }> = [
     { key: "all", label: "All statuses" },
     { key: "queued", label: "Queued" },
     { key: "processing", label: "Processing" },
@@ -46,31 +67,87 @@ const STATUS_OPTIONS = [
 export default function HistoryPage() {
     const router = useRouter();
 
-    const [query, setQuery] = useState("");
-    const [status, setStatus] = useState<(typeof STATUS_OPTIONS)[number]["key"]>("all");
-    const [page, setPage] = useState(1);
+    const [query, setQuery] = useState<string>("");
+    const [status, setStatus] = useState<StatusFilter>("all");
+    const [page, setPage] = useState<number>(1);
+    const [reloadKey, setReloadKey] = useState<number>(0);
 
-    const [reloadKey, setReloadKey] = useState(0);
-
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState<boolean>(true);
     const [error, setError] = useState<string | null>(null);
 
-    const [items, setItems] = useState<PublicNoteGeneration[]>([]);
-    const [total, setTotal] = useState(0);
-
+    const [items, setItems] = useState<GenerationWithOptionalThumbs[]>([]);
+    const [total, setTotal] = useState<number>(0);
     const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
 
-    const selectedCount = useMemo(() => Object.values(selectedIds).filter(Boolean).length, [selectedIds]);
+    const [presetsByTitle, setPresetsByTitle] = useState<Map<string, PublicStylePreset>>(new Map());
+    const [presetsLoaded, setPresetsLoaded] = useState<boolean>(false);
 
-    const allSelectedOnPage = useMemo(() => {
+    const selectedCount = useMemo<number>(
+        () => Object.values(selectedIds).filter(Boolean).length,
+        [selectedIds]
+    );
+
+    const allSelectedOnPage = useMemo<boolean>(() => {
         if (!items.length) return false;
-        return items.every((g) => selectedIds[g.id]);
+        return items.every((g) => Boolean(selectedIds[g.id]));
     }, [items, selectedIds]);
+
+    const rows = useMemo<RowVM[]>(() => {
+        return items.map((g) => {
+            const id = g.id;
+            const href = `/dashboard/history/${encodeURIComponent(id)}`;
+
+            const title = (g.title ?? "").trim() || "Untitled";
+
+            const createdAt = ("created_at" in g ? (g as PublicNoteGeneration).created_at : null) ?? null;
+
+            const statusLabel = formatStatusLabel(g.status);
+            const styleLabel = formatStyleLabel(g);
+
+            const thumbUrl = resolveThumbUrl(g, presetsByTitle);
+
+            return { id, href, title, createdAt, statusLabel, styleLabel, thumbUrl };
+        });
+    }, [items, presetsByTitle]);
 
     function triggerReload() {
         setReloadKey((k) => k + 1);
     }
 
+    // 1) Load presets once
+    useEffect(() => {
+        let cancelled = false;
+
+        async function loadPresets() {
+            try {
+                const res = await fetch("/api/style-presets", { method: "GET", cache: "no-store" });
+                if (!res.ok) return;
+
+                const data = (await res.json().catch(() => null)) as PresetsResponse | null;
+                const list = Array.isArray(data?.presets) ? data!.presets : [];
+
+                const sorted = [...list].sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0));
+
+                const map = new Map<string, PublicStylePreset>();
+                for (const p of sorted) {
+                    const t = (p.title ?? "").trim();
+                    if (!t) continue;
+                    map.set(normalizeTitle(t), p);
+                }
+
+                if (!cancelled) setPresetsByTitle(map);
+            } finally {
+                if (!cancelled) setPresetsLoaded(true);
+            }
+        }
+
+        void loadPresets();
+        return () => {
+            cancelled = true;
+        };
+    }, []);
+
+    // 2) Load generations list
     useEffect(() => {
         let cancelled = false;
 
@@ -89,20 +166,23 @@ export default function HistoryPage() {
                     method: "GET",
                     cache: "no-store",
                 });
+
                 if (!res.ok) {
                     const data = await safeJson(res);
-                    throw new Error(data?.error || "Failed to load history");
+                    const msg = typeof (data as { error?: unknown } | null)?.error === "string"
+                        ? (data as { error: string }).error
+                        : "Failed to load history";
+                    throw new Error(msg);
                 }
 
                 const data = (await res.json()) as ListResponse;
-
-                const nextItems = Array.isArray(data) ? data : data.items;
+                const nextItems = (Array.isArray(data) ? data : data.items) ?? [];
                 const nextTotal = Array.isArray(data) ? data.length : data.total;
 
                 if (cancelled) return;
 
-                setItems(nextItems ?? []);
-                setTotal(Number.isFinite(nextTotal) ? nextTotal : (nextItems?.length ?? 0));
+                setItems(nextItems as GenerationWithOptionalThumbs[]);
+                setTotal(Number.isFinite(nextTotal) ? nextTotal : nextItems.length);
                 setSelectedIds({});
             } catch (e) {
                 if (cancelled) return;
@@ -112,7 +192,7 @@ export default function HistoryPage() {
             }
         }
 
-        load();
+        void load();
         return () => {
             cancelled = true;
         };
@@ -137,14 +217,15 @@ export default function HistoryPage() {
             const res = await fetch(`/api/generations/${id}`, { method: "DELETE" });
             if (!res.ok) {
                 const data = await safeJson(res);
-                throw new Error(data?.error || "Delete failed");
+                const msg = typeof (data as { error?: unknown } | null)?.error === "string"
+                    ? (data as { error: string }).error
+                    : "Delete failed";
+                throw new Error(msg);
             }
 
-            // Optimistic UI update so the row disappears immediately
             setItems((prev) => {
                 const next = prev.filter((g) => g.id !== id);
 
-                // If we deleted the last row on a non-first page, move back a page and reload
                 if (next.length === 0 && page > 1) {
                     setPage((p) => Math.max(1, p - 1));
                 } else {
@@ -161,8 +242,6 @@ export default function HistoryPage() {
                 return next;
             });
 
-            // If you want to always jump to page 1 after delete, keep this.
-            // It now reliably triggers a reload even when page is already 1.
             setPage(1);
             triggerReload();
         } catch (e) {
@@ -289,127 +368,101 @@ export default function HistoryPage() {
                                             <TableCell />
                                         </TableRow>
                                     ))
-                                ) : items.length ? (
-                                    items.map((g) => {
-                                        const title = (g as any).title || "Untitled";
-                                        const createdAt =
-                                            (g as any).created_at || (g as any).createdAt || (g as any).created;
+                                ) : rows.length ? (
+                                    rows.map((r) => (
+                                        <TableRow
+                                            key={r.id}
+                                            className="cursor-pointer hover:bg-zinc-50/70 dark:hover:bg-white/5"
+                                            onClick={() => router.push(r.href)}
+                                            onKeyDown={(e) => {
+                                                if (e.key === "Enter" || e.key === " ") router.push(r.href);
+                                            }}
+                                            tabIndex={0}
+                                            role="button"
+                                        >
+                                            <TableCell onClick={(e) => e.stopPropagation()}>
+                                                <Checkbox
+                                                    checked={Boolean(selectedIds[r.id])}
+                                                    onCheckedChange={(v) => toggleOne(r.id, Boolean(v))}
+                                                    aria-label="Select row"
+                                                />
+                                            </TableCell>
 
-                                        const statusLabel =
-                                            String((g as any).status || "unknown").replaceAll("_", " ").trim() ||
-                                            "unknown";
+                                            <TableCell>
+                                                <div className="flex items-center gap-3">
+                                                    <RowThumb url={r.thumbUrl} alt={r.styleLabel} isReady={presetsLoaded} />
 
-                                        const styleLabel = formatStyle(g);
-
-                                        const previewUrl =
-                                            (g as any).output_image_url ||
-                                            (g as any).preview_image_url ||
-                                            (g as any).image_url ||
-                                            null;
-
-                                        const href = `/dashboard/history/${encodeURIComponent(g.id)}`;
-
-                                        return (
-                                            <TableRow
-                                                key={g.id}
-                                                className="cursor-pointer hover:bg-zinc-50/70 dark:hover:bg-white/5"
-                                                onClick={() => router.push(href)}
-                                                onKeyDown={(e) => {
-                                                    if (e.key === "Enter" || e.key === " ") router.push(href);
-                                                }}
-                                                tabIndex={0}
-                                                role="button"
-                                            >
-                                                <TableCell onClick={(e) => e.stopPropagation()}>
-                                                    <Checkbox
-                                                        checked={Boolean(selectedIds[g.id])}
-                                                        onCheckedChange={(v) => toggleOne(g.id, Boolean(v))}
-                                                        aria-label="Select row"
-                                                    />
-                                                </TableCell>
-
-                                                <TableCell>
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="relative h-10 w-10 overflow-hidden rounded-md border border-zinc-200/70 bg-white dark:border-white/10 dark:bg-white/5">
-                                                            {previewUrl ? (
-                                                                <Image src={previewUrl} alt="" fill className="object-cover" />
-                                                            ) : (
-                                                                <div className="h-full w-full" />
-                                                            )}
-                                                        </div>
-
-                                                        <div className="min-w-0">
-                                                            <div className="truncate text-sm font-medium">{title}</div>
-                                                            <div className="truncate text-xs text-zinc-600 dark:text-zinc-400">
-                                                                {g.id}
-                                                            </div>
+                                                    <div className="min-w-0">
+                                                        <div className="truncate text-sm font-medium">{r.title}</div>
+                                                        <div className="truncate text-xs text-zinc-600 dark:text-zinc-400">
+                                                            {r.id}
                                                         </div>
                                                     </div>
-                                                </TableCell>
+                                                </div>
+                                            </TableCell>
 
-                                                <TableCell className="hidden md:table-cell">
-                                                    <span className="text-sm text-zinc-700 dark:text-zinc-300">
-                                                        {styleLabel}
-                                                    </span>
-                                                </TableCell>
+                                            <TableCell className="hidden md:table-cell">
+                                                <span className="text-sm text-zinc-700 dark:text-zinc-300">
+                                                    {r.styleLabel}
+                                                </span>
+                                            </TableCell>
 
-                                                <TableCell className="hidden md:table-cell">
-                                                    <span className="text-sm text-zinc-700 dark:text-zinc-300">
-                                                        {createdAt ? formatDate(createdAt) : "—"}
-                                                    </span>
-                                                </TableCell>
+                                            <TableCell className="hidden md:table-cell">
+                                                <span className="text-sm text-zinc-700 dark:text-zinc-300">
+                                                    {r.createdAt ? formatDate(r.createdAt) : "—"}
+                                                </span>
+                                            </TableCell>
 
-                                                <TableCell>
-                                                    <StatusPill value={statusLabel} />
-                                                </TableCell>
+                                            <TableCell>
+                                                <StatusPill value={r.statusLabel} />
+                                            </TableCell>
 
-                                                <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                                                    <DropdownMenu>
-                                                        <DropdownMenuTrigger asChild>
-                                                            <Button
-                                                                variant="ghost"
-                                                                size="icon"
-                                                                aria-label="Open menu"
-                                                                onClick={(e) => e.stopPropagation()}
-                                                            >
-                                                                <MoreHorizontal className="h-4 w-4" />
-                                                            </Button>
-                                                        </DropdownMenuTrigger>
-
-                                                        <DropdownMenuContent
-                                                            align="end"
-                                                            className="w-44"
+                                            <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
+                                                <DropdownMenu>
+                                                    <DropdownMenuTrigger asChild>
+                                                        <Button
+                                                            variant="ghost"
+                                                            size="icon"
+                                                            aria-label="Open menu"
                                                             onClick={(e) => e.stopPropagation()}
                                                         >
-                                                            <DropdownMenuLabel>Actions</DropdownMenuLabel>
-                                                            <DropdownMenuSeparator />
-                                                            <DropdownMenuItem onSelect={() => router.push(href)}>
-                                                                Open
-                                                            </DropdownMenuItem>
-                                                            <DropdownMenuItem
-                                                                onSelect={(e) => {
-                                                                    e.preventDefault();
-                                                                    navigator.clipboard?.writeText(g.id);
-                                                                }}
-                                                            >
-                                                                Copy id
-                                                            </DropdownMenuItem>
-                                                            <DropdownMenuSeparator />
-                                                            <DropdownMenuItem
-                                                                className="text-red-600 focus:text-red-600"
-                                                                onSelect={(e) => {
-                                                                    e.preventDefault();
-                                                                    void deleteOne(g.id);
-                                                                }}
-                                                            >
-                                                                Delete
-                                                            </DropdownMenuItem>
-                                                        </DropdownMenuContent>
-                                                    </DropdownMenu>
-                                                </TableCell>
-                                            </TableRow>
-                                        );
-                                    })
+                                                            <MoreHorizontal className="h-4 w-4" />
+                                                        </Button>
+                                                    </DropdownMenuTrigger>
+
+                                                    <DropdownMenuContent
+                                                        align="end"
+                                                        className="w-44"
+                                                        onClick={(e) => e.stopPropagation()}
+                                                    >
+                                                        <DropdownMenuLabel>Actions</DropdownMenuLabel>
+                                                        <DropdownMenuSeparator />
+                                                        <DropdownMenuItem onSelect={() => router.push(r.href)}>
+                                                            Open
+                                                        </DropdownMenuItem>
+                                                        <DropdownMenuItem
+                                                            onSelect={(e) => {
+                                                                e.preventDefault();
+                                                                void navigator.clipboard?.writeText(r.id);
+                                                            }}
+                                                        >
+                                                            Copy id
+                                                        </DropdownMenuItem>
+                                                        <DropdownMenuSeparator />
+                                                        <DropdownMenuItem
+                                                            className="text-red-600 focus:text-red-600"
+                                                            onSelect={(e) => {
+                                                                e.preventDefault();
+                                                                void deleteOne(r.id);
+                                                            }}
+                                                        >
+                                                            Delete
+                                                        </DropdownMenuItem>
+                                                    </DropdownMenuContent>
+                                                </DropdownMenu>
+                                            </TableCell>
+                                        </TableRow>
+                                    ))
                                 ) : (
                                     <TableRow>
                                         <TableCell colSpan={6}>
@@ -457,6 +510,61 @@ export default function HistoryPage() {
     );
 }
 
+function RowThumb({ url, alt, isReady }: { url: string | null; alt: string; isReady: boolean }) {
+    return (
+        <div className="relative h-10 w-10 overflow-hidden rounded-md border border-zinc-200/70 bg-white dark:border-white/10 dark:bg-white/5">
+            {url ? (
+                <Image src={url} alt={alt} fill className="object-cover" sizes="40px" />
+            ) : (
+                <div
+                    className={[
+                        "h-full w-full",
+                        isReady ? "bg-zinc-100 dark:bg-white/5" : "bg-zinc-200/70 dark:bg-white/10",
+                    ].join(" ")}
+                    aria-hidden="true"
+                />
+            )}
+        </div>
+    );
+}
+
+function normalizeTitle(t: string): string {
+    return t.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+function formatStatusLabel(status: PublicNoteGeneration["status"]): string {
+    return String(status).replaceAll("_", " ").trim() || "unknown";
+}
+
+function resolveThumbUrl(g: GenerationWithOptionalThumbs, presetsByTitle: Map<string, PublicStylePreset>): string | null {
+    // Prefer output thumbs if you later add them
+    const out = (g.output_image_url ?? g.preview_image_url ?? g.image_url ?? "").trim();
+    if (out) return out;
+
+    if (g.style?.mode !== "preset") return null;
+
+    const snapTitle = (g.style.snapshot_title ?? "").trim();
+    if (!snapTitle) return null;
+
+    const preset = presetsByTitle.get(normalizeTitle(snapTitle));
+    if (!preset) return null;
+
+    // Playground works with preset.image_url, so use it first.
+    const url = (preset.image_url ?? "").trim();
+    if (url) return url;
+
+    // Fallback if your public preset exposes image_key instead of image_url
+    const key = ("image_key" in preset ? (preset as unknown as { image_key?: string }).image_key : "") ?? "";
+    const keyTrim = key.trim();
+    return keyTrim ? keyTrim : null;
+}
+
+function formatStyleLabel(g: PublicNoteGeneration): string {
+    if (g.style?.mode === "custom") return (g.style.snapshot_title ?? "Custom").trim() || "Custom";
+    if (g.style?.mode === "preset") return (g.style.snapshot_title ?? "Preset").trim() || "Preset";
+    return "Preset";
+}
+
 function formatDate(v: string | Date) {
     const d = v instanceof Date ? v : new Date(v);
     if (Number.isNaN(d.getTime())) return String(v);
@@ -467,27 +575,6 @@ function formatDate(v: string | Date) {
         hour: "2-digit",
         minute: "2-digit",
     });
-}
-
-/**
- * Show the preset title, not the preset id.
- * Uses snapshot_title stored on the generation (best), falls back gracefully.
- */
-function formatStyle(g: PublicNoteGeneration) {
-    const style = (g as any).style;
-
-    if (style?.mode === "custom") {
-        return style?.snapshot_title || "Custom";
-    }
-
-    if (style?.mode === "preset") {
-        return style?.snapshot_title || "Preset";
-    }
-
-    const legacySnapshot = (g as any)?.snapshot_title;
-    if (legacySnapshot) return String(legacySnapshot);
-
-    return "Preset";
 }
 
 function StatusPill({ value }: { value: string }) {
@@ -511,7 +598,7 @@ function StatusPill({ value }: { value: string }) {
     );
 }
 
-async function safeJson(res: Response) {
+async function safeJson(res: Response): Promise<unknown | null> {
     try {
         return await res.json();
     } catch {
