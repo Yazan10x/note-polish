@@ -5,14 +5,16 @@ Upload a screenshot or paste text, pick a style, and generate a print ready summ
 
 **Demo Video:** [YouTube link](https://youtu.be/U4gpXMrDsnE)
 
-Before and after example (heart notes)
+Before and after example (heart notes):
 <img width="1147" height="900" alt="image" src="https://github.com/user-attachments/assets/a5659497-e5ee-4df1-928d-27571f45557e" />
 
 
-Pick from 1 to 5 styles to customize the output
+Pick from 1 to 5 styles to customize the output:
 <img width="1400" height="860" alt="dashboard" src="https://github.com/user-attachments/assets/a299242f-a1f4-4d66-87f1-afa7a3d89796" />
 
 Accessibility Settings: Large text + spacing, bold text, high contrast, and reduced motion.
+<img width="1781" height="1086" alt="image" src="https://github.com/user-attachments/assets/43b5df2f-dffc-4986-a5ac-73923ad0fe29" />
+
 
 ## Tech Stack
 - Next.js (TypeScript)
