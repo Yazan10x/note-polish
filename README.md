@@ -12,6 +12,7 @@ Before and after example (heart notes)
 Pick from 1 to 5 styles to customize the output
 <img width="1400" height="860" alt="dashboard" src="https://github.com/user-attachments/assets/a299242f-a1f4-4d66-87f1-afa7a3d89796" />
 
+Accessibility Settings: Large text + spacing, bold text, high contrast, and reduced motion.
 
 ## Tech Stack
 - Next.js (TypeScript)
