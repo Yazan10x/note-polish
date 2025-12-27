@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
-import { Bell, Home, LineChart, Package, Search, Settings, Moon, Sun } from "lucide-react";
+import {Bell, Home, LineChart, Package, Search, Settings, Moon, Sun, Accessibility} from "lucide-react";
 
 import type { PublicUser } from "@/lib/models/user";
 import { Button } from "@/components/ui/button";
@@ -56,7 +56,11 @@ export default function DashboardShell({
                     </div>
 
                     <nav className="flex-1 px-3 py-2">
-                        <NavItem active={isActive(pathname, "/dashboard")} href="/dashboard" icon={<Home className="h-4 w-4" />}>
+                        <NavItem
+                            active={isActive(pathname, "/dashboard")}
+                            href="/dashboard"
+                            icon={<Home className="h-4 w-4" />}
+                        >
                             Overview
                         </NavItem>
                         <NavItem
@@ -80,6 +84,13 @@ export default function DashboardShell({
                         {/*>*/}
                         {/*    Settings*/}
                         {/*</NavItem>*/}
+                        <NavItem
+                            active={isActive(pathname, "/dashboard/accessibility")}
+                            href="/dashboard/accessibility"
+                            icon={<Accessibility className="h-4 w-4" />}
+                        >
+                            Accessibility
+                        </NavItem>
                     </nav>
 
                     <div className="border-t border-zinc-200/70 px-6 py-4 text-xs text-zinc-600 dark:border-white/10 dark:text-zinc-400">
@@ -92,10 +103,10 @@ export default function DashboardShell({
                     <header className="sticky top-0 z-10 border-b border-zinc-200/70 bg-white/70 backdrop-blur dark:border-white/10 dark:bg-black/30">
                         <div className="mx-auto flex max-w-6xl items-center gap-3 px-6 py-4">
                             <div className="flex flex-1 items-center gap-2">
-                                <div className="relative w-full max-w-md">
-                                    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />
-                                    <Input className="pl-9" placeholder="Search generations..." />
-                                </div>
+                                {/*<div className="relative w-full max-w-md">*/}
+                                {/*    <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-500" />*/}
+                                {/*    <Input className="pl-9" placeholder="Search generations..." />*/}
+                                {/*</div>*/}
                             </div>
 
                             <ThemeToggle />
@@ -121,7 +132,7 @@ export default function DashboardShell({
                                     <DropdownMenuLabel>Account</DropdownMenuLabel>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem asChild>
-                                        <Link href="/dashboard/settings">Settings</Link>
+                                        <Link href="/dashboard/accessibility">Accessibility</Link>
                                     </DropdownMenuItem>
                                     <DropdownMenuSeparator />
                                     <DropdownMenuItem onSelect={(e) => e.preventDefault()}>
@@ -168,8 +179,11 @@ export default function DashboardShell({
 
 function isActive(pathname: string | null, href: string) {
     if (!pathname) return false;
-    if (pathname === href) return true;
-    return pathname.startsWith(href + "/");
+
+    // Only treat "/dashboard" as active on the exact route
+    if (href === "/dashboard") return pathname === "/dashboard";
+
+    return pathname === href || pathname.startsWith(href + "/");
 }
 
 function ThemeToggle() {

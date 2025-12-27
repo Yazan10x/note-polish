@@ -133,3 +133,115 @@
     @apply bg-background text-foreground;
   }
 }
+
+
+html.a11y-bold body {
+  font-weight: 600;
+}
+
+html.a11y-bold label {
+  font-weight: 600;
+}
+
+html.a11y-bold .text-xs,
+html.a11y-bold .text-sm,
+html.a11y-bold .text-base {
+  font-weight: 600;
+}
+
+html.a11y-contrast {
+  color-scheme: light;
+}
+
+html.dark.a11y-contrast {
+  color-scheme: dark;
+}
+
+html.a11y-contrast .text-zinc-500,
+html.a11y-contrast .text-zinc-600 {
+  color: rgb(63 63 70);
+}
+
+html.dark.a11y-contrast .text-zinc-400,
+html.dark.a11y-contrast .text-zinc-500 {
+  color: rgb(212 212 216);
+}
+
+html.a11y-contrast .border-zinc-200\/70 {
+  border-color: rgb(161 161 170);
+}
+
+html.dark.a11y-contrast .dark\:border-white\/10 {
+  border-color: rgb(113 113 122);
+}
+
+html.a11y-contrast input,
+html.a11y-contrast textarea,
+html.a11y-contrast select {
+  border-color: rgb(161 161 170);
+}
+
+html.dark.a11y-contrast input,
+html.dark.a11y-contrast textarea,
+html.dark.a11y-contrast select {
+  border-color: rgb(113 113 122);
+}
+
+html.a11y-reduce-motion * {
+  animation: none !important;
+  transition: none !important;
+}
+
+html.a11y-reduce-motion {
+  scroll-behavior: auto !important;
+}
+
+html.a11y-reduce-motion:focus-within {
+  scroll-behavior: auto !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation: none !important;
+    transition: none !important;
+  }
+
+  html {
+    scroll-behavior: auto !important;
+  }
+
+  html:focus-within {
+    scroll-behavior: auto !important;
+  }
+}
+
+html.a11y-large {
+  font-size: 20px;
+  line-height: 1.75;
+}
+
+html.a11y-large .text-xs {
+  font-size: 0.95rem;
+  line-height: 1.7;
+}
+
+html.a11y-large .text-sm {
+  font-size: 1.05rem;
+  line-height: 1.75;
+}
+
+html.a11y-large .text-base {
+  font-size: 1.15rem;
+  line-height: 1.8;
+}
+
+html.a11y-large input,
+html.a11y-large button,
+html.a11y-large label {
+  line-height: 1.75;
+}
+
+:where(a, button, input, textarea, select, [tabindex]):focus-visible {
+  outline: 3px solid currentColor;
+  outline-offset: 3px;
+}

@@ -21,14 +21,14 @@ Pick from 1 to 5 styles to customize the output
 
 ## Run Locally
 
-1) Create your local env file:
-```bash
-bash ./setup_local.sh
-```
-
-Optional: pass your OpenAI key in the command:
+1) Create your local env file with OpenAI key:
 ```bash
 bash ./setup_local.sh sk-your-openai-key
+```
+
+Optional: Write your OpenAI key in .env.local manually:
+```bash
+bash ./setup_local.sh
 ```
 
 2) Start everything:
@@ -47,3 +47,10 @@ OPENAI_API_KEY=your_key_here
 MONGODB_URI=mongodb://127.0.0.1:27077
 MONGODB_DB=note_polish
 ```
+
+## Release notes
+
+| Version | Date       | Notes |
+| --- |------------| --- |
+| 0.1.0 | 2025-12-17 | Launch: paste or upload notes and generate a clean one page study sheet. Playground with 5 style presets (including exam or cheat sheet focused formats). Preview and download export with saved History. |
+| 0.2.0 | 2025-12-26 | Accessibility settings page added. Toggles for large text and spacing, bold text, high contrast, and reduced motion are saved in localStorage and applied globally via `html` classes. |
