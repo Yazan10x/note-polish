@@ -10,14 +10,12 @@ NEXT_PID=""
 WORKER_PID=""
 
 seed_if_needed() {
-  # Requires .env.local with MONGODB_URI
   if [ ! -f ".env.local" ]; then
     echo "Seed skipped: .env.local not found"
     return 0
   fi
 
   set -a
-  # shellcheck disable=SC1091
   source .env.local
   set +a
 
@@ -28,26 +26,33 @@ seed_if_needed() {
 
   const uri = process.env.MONGODB_URI;
   const dbName = process.env.MONGODB_DB || "note_polish";
-  const colName = "style_presets";
-  const seedPath = "db/note_polish/style_presets.json";
 
   if (!uri) { console.log("Seed skipped: MONGODB_URI not set."); process.exit(0); }
-  if (!fs.existsSync(seedPath)) { console.log(`Seed skipped: missing ${seedPath}`); process.exit(0); }
+
+  const seeds = [
+    { colName: "style_presets", seedPath: "db/note_polish/style_presets.json" },
+    { colName: "users", seedPath: "db/note_polish/users.json" },
+  ];
 
   (async () => {
     const client = new MongoClient(uri);
     await client.connect();
     const db = client.db(dbName);
 
-    const exists = (await db.listCollections({ name: colName }, { nameOnly: true }).toArray()).length > 0;
-    if (exists) { console.log(`Seed skipped: collection ${dbName}.${colName} already exists.`); await client.close(); return; }
+    for (const s of seeds) {
+      if (!fs.existsSync(s.seedPath)) { console.log(`Seed skipped: missing ${s.seedPath}`); continue; }
 
-    const docs = EJSON.parse(fs.readFileSync(seedPath, "utf8"));
-    if (!Array.isArray(docs) || docs.length === 0) { console.log("Seed skipped: seed file is empty."); await client.close(); return; }
+      const exists = (await db.listCollections({ name: s.colName }, { nameOnly: true }).toArray()).length > 0;
+      if (exists) { console.log(`Seed skipped: collection ${dbName}.${s.colName} already exists.`); continue; }
 
-    await db.createCollection(colName);
-    await db.collection(colName).insertMany(docs);
-    console.log(`Seeded ${docs.length} docs into ${dbName}.${colName}.`);
+      const docs = EJSON.parse(fs.readFileSync(s.seedPath, "utf8"));
+      if (!Array.isArray(docs) || docs.length === 0) { console.log(`Seed skipped: ${s.seedPath} is empty or not a JSON array.`); continue; }
+
+      await db.createCollection(s.colName);
+      await db.collection(s.colName).insertMany(docs);
+      console.log(`Seeded ${docs.length} docs into ${dbName}.${s.colName}.`);
+    }
+
     await client.close();
   })().catch(e => { console.log("Seed skipped: " + e.message); process.exit(0); });
   '

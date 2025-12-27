@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {useIsLocalHost} from "@/hooks/useIsLocalHost";
 
 type FieldErrors = {
     email?: string;
@@ -25,6 +26,8 @@ export default function LoginPage() {
     const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
     const [error, setError] = useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = useState(false);
+
+    const isLocal = useIsLocalHost();
 
     async function onSubmit(e: React.FormEvent) {
         e.preventDefault();
@@ -65,6 +68,36 @@ export default function LoginPage() {
         }
     }
 
+    async function onDemoLogin() {
+        setError(null);
+        setFieldErrors({});
+        setIsSubmitting(true);
+
+        try {
+            const res = await fetch("/api/auth/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    email: "demo@account.local",
+                    password: "demologin",
+                }),
+            });
+
+            if (!res.ok) {
+                const data = await res.json().catch(() => ({}));
+                setError(data?.error ?? "Demo login failed");
+                return;
+            }
+
+            router.push("/dashboard");
+            router.refresh();
+        } catch {
+            setError("Demo login failed");
+        } finally {
+            setIsSubmitting(false);
+        }
+    }
+
     return (
         <main className="min-h-screen bg-white text-black dark:bg-black dark:text-white">
             <div className="mx-auto flex min-h-screen max-w-5xl items-center justify-center px-6 py-16">
@@ -72,9 +105,9 @@ export default function LoginPage() {
                     <div className="hidden lg:block">
                         <div className="space-y-4">
                             <div className="flex items-center gap-3">
-                                <Image src="/icon.png" alt="Note Polish" width={44} height={44} priority />
+                                <Image src="/icon.png" alt="Note Polisher" width={44} height={44} priority />
                                 <div>
-                                    <div className="text-sm font-medium">Note Polish</div>
+                                    <div className="text-sm font-medium">Note Polisher</div>
                                     <div className="text-xs text-zinc-600 dark:text-zinc-400">
                                         One page study sheets
                                     </div>
@@ -143,6 +176,16 @@ export default function LoginPage() {
                                 <Button type="submit" className="w-full" disabled={isSubmitting}>
                                     {isSubmitting ? "Signing in..." : "Login"}
                                 </Button>
+                                {isLocal ? (
+                                    <Button
+                                        type="button"
+                                        className="w-full bg-blue-600 text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
+                                        onClick={onDemoLogin}
+                                        disabled={isSubmitting}
+                                    >
+                                        Use demo account
+                                    </Button>
+                                ) : null}
                             </form>
 
                             <div className="text-center text-sm text-zinc-600 dark:text-zinc-400">
@@ -161,3 +204,5 @@ export default function LoginPage() {
         </main>
     );
 }
+
+

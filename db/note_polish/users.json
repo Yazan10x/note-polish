@@ -1,0 +1,17 @@
+[
+  {
+    "_id": {
+      "$oid": "694f435359e76f6d853b1369"
+    },
+    "full_name": "Demo Account",
+    "email": "demo@account.local",
+    "password_hash": "scrypt:16384:8:1:d1c81516d2c90914258a638bf4552e6b:900532e05ae9f16976235981227a78aca0625cfa1a22392a610398eedf2cc9f7b88a876bd3ea7512300a9fcd5470b2950c7be2d51bacc24b2e6124f7607a318f",
+    "created_at": {
+      "$date": "2025-12-27T02:24:19.835Z"
+    },
+    "updated_at": {
+      "$date": "2025-12-27T02:24:19.835Z"
+    }
+  }
+]
+

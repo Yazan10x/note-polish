@@ -50,7 +50,7 @@ export default function DashboardShell({
                     <div className="flex items-center gap-3 px-6 py-5">
                         <Image src="/icon.png" alt="Note Polish" width={30} height={30} priority />
                         <div className="leading-tight">
-                            <div className="text-sm font-semibold">Note Polish</div>
+                            <div className="text-sm font-semibold">Note Polisher</div>
                             <div className="text-xs text-zinc-600 dark:text-zinc-400">Dashboard</div>
                         </div>
                     </div>
